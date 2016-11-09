@@ -20,9 +20,15 @@
     "build": "grunt dist",
     "change": "grunt chg-add",
     "clean": "grunt clean",
+    "grunt": "grunt",
+    "dev": "run-p babel browserify",
+    "dev-test": "run-p dev test-watch",
+    "babel": "babel -w src/js -d es5",
+    "browserify": "grunt browserify:watch",
     "lint": "vjsstandard",
     "start": "grunt watchAll",
-    "test": "grunt test"
+    "test": "grunt test",
+    "test-watch": "grunt browserify:tests"
   },
   "repository": {
     "type": "git",
