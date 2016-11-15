@@ -24,7 +24,7 @@ import mergeOptions from './utils/merge-options.js';
 import textTrackConverter from './tracks/text-track-list-converter.js';
 import ModalDialog from './modal-dialog';
 import Tech from './tech/tech.js';
-import * as middleware from './tech/middleware.js';
+import { setSource as middlewareSetSource } from './tech/middleware.js';
 import AudioTrackList from './tracks/audio-track-list.js';
 import VideoTrackList from './tracks/video-track-list.js';
 
@@ -695,6 +695,7 @@ class Player extends Component {
       TechComponent = Component.getComponent(techName);
     }
     this.tech_ = new TechComponent(techOptions);
+    this.middleware_.push(this.tech_);
 
     // player.triggerReady is always async, so don't need this to be async
     this.tech_.ready(Fn.bind(this, this.handleTechReady_), true);
@@ -1205,7 +1206,7 @@ class Player extends Component {
   techCall_(method, arg) {
     // If it's not ready yet, call method when it is
     if (method === 'setCurrentTime') {
-      return middleware.set(this.currentType(), method, arg, this.tech_)
+      return this.middlewareSet(method, arg)
     }
 
     if (this.tech_ && !this.tech_.isReady_) {
@@ -1238,7 +1239,7 @@ class Player extends Component {
     if (this.tech_ && this.tech_.isReady_) {
 
       if (method in {currentTime:1, duration:1}) {
-        return middleware.get(this.currentType(), method, this.tech_);
+        return this.middlewareGet(method, this.tech_);
       }
 
       // Flash likes to die and reload when you hide or reposition it.
@@ -1263,6 +1264,33 @@ class Player extends Component {
     }
 
     return;
+  }
+
+  middlewareSet(method, arg) {
+    var value = arg;
+
+    this.middleware_
+    .forEach((mw) => {
+      if (mw[method]) {
+        value = mw[method](value)
+      }
+    });
+
+    return value;
+  }
+
+  middlewareGet(method) {
+  var value;
+
+  this.middleware_
+  .reverse()
+  .forEach((mw) => {
+    if (mw[method]) {
+      value = mw[method](value)
+    }
+  });
+
+  return value;
   }
 
   /**
@@ -1853,8 +1881,9 @@ class Player extends Component {
       return this.techGet_('src');
     }
 
-    middleware.setSource(source[0], (tech, src) => {
-      console.log(tech.name, src);
+    middlewareSetSource(source[0], (tech, src, mws) => {
+      console.log(tech.name, src, mws);
+      this.middleware_ = mws;
       this.loadTech_(tech.name, src)
     });
 
