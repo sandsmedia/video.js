@@ -1371,6 +1371,7 @@ class Player extends Component {
     //    this.pause();
     //  }
     // }
+
   }
 
   /**
