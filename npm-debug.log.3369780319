@@ -1,0 +1,27 @@
+0 info it worked if it ends with ok
+1 verbose cli [ '/usr/local/bin/node', '/usr/local/bin/npm', 'run', 'lint' ]
+2 info using npm@3.6.0
+3 info using node@v5.6.0
+4 verbose run-script [ 'prelint', 'lint', 'postlint' ]
+5 info lifecycle video.js@5.14.0~prelint: video.js@5.14.0
+6 silly lifecycle video.js@5.14.0~prelint: no script for prelint, continuing
+7 info lifecycle video.js@5.14.0~lint: video.js@5.14.0
+8 verbose lifecycle video.js@5.14.0~lint: unsafe-perm in lifecycle true
+9 verbose lifecycle video.js@5.14.0~lint: PATH: /usr/local/lib/node_modules/npm/bin/node-gyp-bin:/Users/angela/Developer/video.js/node_modules/.bin:/Users/angela/Developer/video.js/node_modules/.bin:/Users/angela/Developer/node_modules/.bin:/Users/angela/node_modules/.bin:/Users/node_modules/.bin:/node_modules/.bin:/usr/local/bin:/Users/angela/.ebcli/bin:/opt/local/bin:/opt/local/sbin:/opt/local/bin:/opt/local/sbin:/Library/Frameworks/Python.framework/Versions/2.7/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Server.app/Contents/ServerRoot/usr/bin:/Applications/Server.app/Contents/ServerRoot/usr/sbin:/Library/TeX/texbin
+10 verbose lifecycle video.js@5.14.0~lint: CWD: /Users/angela/Developer/video.js
+11 silly lifecycle video.js@5.14.0~lint: Args: [ '-c', 'vjsstandard' ]
+12 verbose stack Error: write EPIPE
+12 verbose stack     at exports._errnoException (util.js:856:11)
+12 verbose stack     at WriteWrap.afterWrite (net.js:763:14)
+13 verbose cwd /Users/angela/Developer/video.js
+14 error Darwin 15.4.0
+15 error argv "/usr/local/bin/node" "/usr/local/bin/npm" "run" "lint"
+16 error node v5.6.0
+17 error npm  v3.6.0
+18 error code EPIPE
+19 error errno EPIPE
+20 error syscall write
+21 error write EPIPE
+22 error If you need help, you may report this error at:
+22 error     <https://github.com/npm/npm/issues>
+23 verbose exit [ 1, true ]
