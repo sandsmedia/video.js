@@ -1081,13 +1081,13 @@ class Player extends Component {
 
     // When controls are disabled a click should not toggle playback because
     // the click is considered a control
-    if (this.controls()) {
-      if (this.paused()) {
-        this.play();
-      } else {
-        this.pause();
-      }
-    }
+    //if (this.controls()) {
+    //  if (this.paused()) {
+    //    this.play();
+    //  } else {
+    //    this.pause();
+    //  }
+    //}
   }
 
   /**
