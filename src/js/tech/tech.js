@@ -21,14 +21,8 @@ import document from 'global/document';
 /**
  * An Object containing a structure like: `{src: 'url', type: 'mimetype'}` or string
  * that just contains the src url alone.
- *
- * ``` js
- *   var SourceObject = {
- *     src: 'http://example.com/some-video.mp4',
- *     type: 'video/mp4'
- *   };
- *   var SourceString = 'http://example.com/some-video.mp4';
- * ```
+ * * `var SourceObject = {src: 'http://ex.com/video.mp4', type: 'video/mp4'};`
+   * `var SourceString = 'http://example.com/some-video.mp4';`
  *
  * @typedef {Object|string} Tech~SourceObject
  *
@@ -146,8 +140,10 @@ class Tech extends Component {
     this.initTextTrackListeners();
     this.initTrackListeners();
 
-    // Turn on component tap events
-    this.emitTapEvents();
+    // Turn on component tap events only if not using native controls
+    if (!options.nativeControlsForTouch) {
+      this.emitTapEvents();
+    }
   }
 
   /* Fallbacks for unsupported event types
@@ -948,10 +944,7 @@ Tech.prototype.featuresNativeTextTracks = false;
  * Source handlers are scripts for handling specific formats.
  * The source handler pattern is used for adaptive formats (HLS, DASH) that
  * manually load video data and feed it into a Source Buffer (Media Source Extensions)
- *
- * ```js
- *   Tech.withSourceHandlers.call(MyTech);
- * ```
+ * Example: `Tech.withSourceHandlers.call(MyTech);`
  *
  * @param {Tech} _Tech
  *        The tech to add source handler functions to.
