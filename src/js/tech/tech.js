@@ -17,6 +17,7 @@ import { bufferedPercent } from '../utils/buffer.js';
 import MediaError from '../media-error.js';
 import window from 'global/window';
 import document from 'global/document';
+import {isPlain} from '../utils/obj';
 
 /**
  * An Object containing a structure like: `{src: 'url', type: 'mimetype'}` or string
@@ -143,6 +144,10 @@ class Tech extends Component {
     // Turn on component tap events only if not using native controls
     if (!options.nativeControlsForTouch) {
       this.emitTapEvents();
+    }
+
+    if (this.constructor) {
+      this.name_ = this.constructor.name || 'Unknown Tech';
     }
   }
 
@@ -522,13 +527,27 @@ class Tech extends Component {
    *
    * @fires Tech#vttjsloaded
    * @fires Tech#vttjserror
-   * @fires Tech#texttrackchange
    */
   addWebVttScript_() {
     if (!window.WebVTT && this.el().parentNode !== null && this.el().parentNode !== undefined) {
+      const vtt = require('videojs-vtt.js');
+
+      // load via require if available and vtt.js script location was not passed in
+      // as an option. novtt builds will turn the above require call into an empty object
+      // which will cause this if check to always fail.
+      if (!this.options_['vtt.js'] && isPlain(vtt) && Object.keys(vtt).length > 0) {
+        Object.keys(vtt).forEach(function(k) {
+          window[k] = vtt[k];
+        });
+        this.trigger('vttjsloaded');
+        return;
+      }
+
+      // load vtt.js via the script location option or the cdn of no location was
+      // passed in
       const script = document.createElement('script');
 
-      script.src = this.options_['vtt.js'] || '../node_modules/videojs-vtt.js/dist/vtt.js';
+      script.src = this.options_['vtt.js'] || 'https://cdn.rawgit.com/gkatsev/vtt.js/vjs-v0.12.1/dist/vtt.min.js';
       script.onload = () => {
         /**
          * Fired when vtt.js is loaded.
@@ -570,13 +589,12 @@ class Tech extends Component {
       return;
     }
 
-    this.remoteTextTracks().on('addtrack', (e) => {
-      this.textTracks().addTrack_(e.track);
-    });
+    const remoteTracks = this.remoteTextTracks();
+    const handleAddTrack = (e) => tracks.addTrack_(e.track);
+    const handleRemoveTrack = (e) => tracks.removeTrack_(e.track);
 
-    this.remoteTextTracks().on('removetrack', (e) => {
-      this.textTracks().removeTrack_(e.track);
-    });
+    remoteTracks.on('addtrack', handleAddTrack);
+    remoteTracks.on('removetrack', handleRemoveTrack);
 
     // Initially, Tech.el_ is a child of a dummy-div wait until the Component system
     // signals that the Tech is ready at which point Tech.el_ is part of the DOM
@@ -584,6 +602,7 @@ class Tech extends Component {
     this.on('ready', this.addWebVttScript_);
 
     const updateDisplay = () => this.trigger('texttrackchange');
+
     const textTracksChanges = () => {
       updateDisplay();
 
@@ -601,7 +620,15 @@ class Tech extends Component {
     tracks.addEventListener('change', textTracksChanges);
 
     this.on('dispose', function() {
+      remoteTracks.off('addtrack', handleAddTrack);
+      remoteTracks.off('removetrack', handleRemoveTrack);
       tracks.removeEventListener('change', textTracksChanges);
+
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i];
+
+        track.removeEventListener('cuechange', updateDisplay);
+      }
     });
   }
 

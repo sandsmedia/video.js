@@ -473,7 +473,7 @@ class Player extends Component {
   createEl() {
     const tag = this.tag;
     let el;
-    const playerElIngest = this.playerElIngest_ = tag.parentNode && tag.parentNode.hasAttribute('data-vjs-player');
+    const playerElIngest = this.playerElIngest_ = tag.parentNode && tag.parentNode.hasAttribute && tag.parentNode.hasAttribute('data-vjs-player');
 
     if (playerElIngest) {
       el = this.el_ = tag.parentNode;
@@ -1646,8 +1646,7 @@ class Player extends Component {
    *
    * @return {Player|number}
    *         - the current time in seconds when getting
-   *         - a reference to the current player object when
-   *           getting
+   *         - a reference to the current player object when setting
    */
   currentTime(seconds) {
     if (seconds !== undefined) {
