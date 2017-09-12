@@ -38,7 +38,10 @@ class Slider extends Component {
     this.on('click', this.handleClick);
 
     this.on(player, 'controlsvisible', this.update);
-    this.on(player, this.playerEvent, this.update);
+
+    if (this.playerEvent) {
+      this.on(player, this.playerEvent, this.update);
+    }
   }
 
   /**
@@ -156,16 +159,23 @@ class Slider extends Component {
 
   /**
    * Update the progress bar of the `Slider`.
+   *
+   * @returns {number}
+   *          The percentage of progress the progress bar represents as a
+   *          number from 0 to 1.
    */
   update() {
-    // In VolumeBar init we have a setTimeout for update that pops and update to the end of the
-    // execution stack. The player is destroyed before then update will cause an error
+
+    // In VolumeBar init we have a setTimeout for update that pops and update
+    // to the end of the execution stack. The player is destroyed before then
+    // update will cause an error
     if (!this.el_) {
       return;
     }
 
-    // If scrubbing, we could use a cached value to make the handle keep up with the user's mouse.
-    // On HTML5 browsers scrubbing is really smooth, but some flash players are slow, so we might want to utilize this later.
+    // If scrubbing, we could use a cached value to make the handle keep up
+    // with the user's mouse. On HTML5 browsers scrubbing is really smooth, but
+    // some flash players are slow, so we might want to utilize this later.
     // var progress =  (this.player_.scrubbing()) ? this.player_.getCache().currentTime / this.player_.duration() : this.player_.currentTime() / this.player_.duration();
     let progress = this.getPercent();
     const bar = this.bar;
@@ -185,13 +195,16 @@ class Slider extends Component {
 
     // Convert to a percentage for setting
     const percentage = (progress * 100).toFixed(2) + '%';
+    const style = bar.el().style;
 
     // Set the new bar width or height
     if (this.vertical()) {
-      bar.el().style.height = percentage;
+      style.height = percentage;
     } else {
-      bar.el().style.width = percentage;
+      style.width = percentage;
     }
+
+    return progress;
   }
 
   /**
@@ -281,10 +294,9 @@ class Slider extends Component {
    *        - true if slider is vertical,
    *        - false is horizontal
    *
-   * @return {boolean|Slider}
+   * @return {boolean}
    *         - true if slider is vertical, and getting
-   *         - false is horizontal, and getting
-   *         - a reference to this object when setting
+   *         - false if the slider is horizontal, and getting
    */
   vertical(bool) {
     if (bool === undefined) {
@@ -298,8 +310,6 @@ class Slider extends Component {
     } else {
       this.addClass('vjs-slider-horizontal');
     }
-
-    return this;
   }
 }
 

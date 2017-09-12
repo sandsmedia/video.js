@@ -27,6 +27,10 @@ class Menu extends Component {
   constructor(player, options) {
     super(player, options);
 
+    if (options) {
+      this.menuButton_ = options.menuButton;
+    }
+
     this.focusedChild_ = -1;
 
     this.on('keydown', this.handleKeyPress);
@@ -42,8 +46,16 @@ class Menu extends Component {
   addItem(component) {
     this.addChild(component);
     component.on('click', Fn.bind(this, function(event) {
-      this.unlockShowing();
-      // TODO: Need to set keyboard focus back to the menuButton
+      // Unpress the associated MenuButton, and move focus back to it
+      if (this.menuButton_) {
+        this.menuButton_.unpressButton();
+
+        // don't focus menu button if item is a caption settings item
+        // because focus will move elsewhere and it logs an error on IE8
+        if (component.name() !== 'CaptionSettingsMenuItem') {
+          this.menuButton_.focus();
+        }
+      }
     }));
   }
 
@@ -67,7 +79,6 @@ class Menu extends Component {
       className: 'vjs-menu'
     });
 
-    el.setAttribute('role', 'presentation');
     el.appendChild(this.contentEl_);
 
     // Prevent clicks from bubbling up. Needed for Menu Buttons,

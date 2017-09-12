@@ -21,7 +21,11 @@ const TestHelpers = {
     playerOptions = playerOptions || {};
     playerOptions.techOrder = playerOptions.techOrder || ['techFaker'];
 
-    return new Player(videoTag, playerOptions);
+    const player = new Player(videoTag, playerOptions);
+
+    player.middleware_ = [player.tech_];
+
+    return player;
   },
 
   getComputedStyle(el, rule) {
@@ -108,7 +112,7 @@ const TestHelpers = {
         const msg = `el should have the "${c}" class in its ` +
                     `className, which is "${el.className}"`;
 
-        assert.ok(Dom.hasElClass(el, c), msg);
+        assert.ok(Dom.hasClass(el, c), msg);
       });
 
       props.forEach(p => {

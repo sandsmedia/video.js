@@ -1,6 +1,3 @@
-import log from './utils/log';
-import {isObject} from './utils/obj';
-
 /**
  * @file extend.js
  * @module extend
@@ -43,6 +40,9 @@ const _inherits = function(subClass, superClass) {
  * Function for subclassing using the same inheritance that
  * videojs uses internally
  *
+ * @static
+ * @const
+ *
  * @param {Object} superClass
  *        The class to inherit from
  *
@@ -59,11 +59,7 @@ const extendFn = function(superClass, subClassMethods = {}) {
 
   let methods = {};
 
-  if (isObject(subClassMethods)) {
-    if (typeof subClassMethods.init === 'function') {
-      log.warn('Constructor logic via init() is deprecated; please use constructor() instead.');
-      subClassMethods.constructor = subClassMethods.init;
-    }
+  if (typeof subClassMethods === 'object') {
     if (subClassMethods.constructor !== Object.prototype.constructor) {
       subClass = subClassMethods.constructor;
     }

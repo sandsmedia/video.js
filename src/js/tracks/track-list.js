@@ -40,8 +40,10 @@ class TrackList extends EventTarget {
     list.tracks_ = [];
 
     /**
+     * @memberof TrackList
      * @member {number} length
      *         The current number of `Track`s in the this Trackist.
+     * @instance
      */
     Object.defineProperty(list, 'length', {
       get() {
@@ -50,7 +52,7 @@ class TrackList extends EventTarget {
     });
 
     for (let i = 0; i < tracks.length; i++) {
-      list.addTrack_(tracks[i]);
+      list.addTrack(tracks[i]);
     }
 
     // must return the object, as for ie8 it will not be this
@@ -65,9 +67,8 @@ class TrackList extends EventTarget {
    *        The audio, video, or text track to add to the list.
    *
    * @fires TrackList#addtrack
-   * @private
    */
-  addTrack_(track) {
+  addTrack(track) {
     const index = this.tracks_.length;
 
     if (!('' + index in this)) {
@@ -99,13 +100,12 @@ class TrackList extends EventTarget {
   /**
    * Remove a {@link Track} from the `TrackList`
    *
-   * @param {Track} track
+   * @param {Track} rtrack
    *        The audio, video, or text track to remove from the list.
    *
    * @fires TrackList#removetrack
-   * @private
    */
-  removeTrack_(rtrack) {
+  removeTrack(rtrack) {
     let track;
 
     for (let i = 0, l = this.length; i < l; i++) {

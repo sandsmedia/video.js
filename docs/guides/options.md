@@ -1,6 +1,6 @@
 # Video.js Options Reference
 
-> **Note:** This document is only a reference for available options. To learn about passing options to Video.js, see [the setup guide](setup.md#options).
+> **Note:** This document is only a reference for available options. To learn about passing options to Video.js, see [the setup guide](/docs/guides/setup.md#options).
 
 ## Table of Contents
 
@@ -36,12 +36,17 @@
   * [${componentName}](#componentname)
 * [Tech Options](#tech-options)
   * [${techName}](#techname)
+  * [flash](#flash)
+    * [swf](#swf)
+  * [html5](#html5)
     * [nativeControlsForTouch](#nativecontrolsfortouch-1)
+    * [nativeAudioTracks](#nativeaudiotracks)
     * [nativeTextTracks](#nativetexttracks)
+    * [nativeVideoTracks](#nativevideotracks)
 
 ## Standard `<video>` Element Options
 
-Each of these options is also available as a [standard `<video>` element attribute][video-attrs]; so, they can be defined in all three manners [outlined in the setup guide](setup.md#options). Typically, defaults are not listed as this is left to browser vendors.
+Each of these options is also available as a [standard `<video>` element attribute][video-attrs]; so, they can be defined in all three manners [outlined in the setup guide](/docs/guides/setup.md#options). Typically, defaults are not listed as this is left to browser vendors.
 
 ### `autoplay`
 
@@ -151,7 +156,7 @@ The `inactivityTimeout` determines how many milliseconds of inactivity is requir
 
 A [language code][lang-codes] matching one of the available languages in the player. This sets the initial language for a player, but it can always be changed.
 
-Learn more about [languages in Video.js](languages.md).
+Learn more about [languages in Video.js][languages].
 
 ### `languages`
 
@@ -159,7 +164,7 @@ Learn more about [languages in Video.js](languages.md).
 
 Customize which languages are available in a player. The keys of this object will be [language codes][lang-codes] and the values will be objects with English keys and translated values.
 
-Learn more about [languages in Video.js](languages.md).
+Learn more about [languages in Video.js][languages]
 
 > **Note**: Generally, this option is not needed and it would be better to pass your custom languages to `videojs.addLanguage()`, so they are available in all players!
 
@@ -201,50 +206,7 @@ player.boo({baz: false});
 
 Although, since the `plugins` option is an object, the order of initialization is not guaranteed!
 
-See [the plugins guide](plugins.md) for more information on Video.js plugins.
-
-### `sourceOrder`
-
-> Type: `boolean`, Default: `false`
->
-> **Note:** In video.js 6.0, this option will default to `true`.
-
-Tells Video.js to prefer the order of [`sources`](#sources) over [`techOrder`](#techorder) in selecting a source and playback tech.
-
-Given the following example:
-
-```js
-videojs('my-player', {
-  sourceOrder: true,
-  sources: [{
-    src: '//path/to/video.flv',
-    type: 'video/x-flv'
-  }, {
-    src: '//path/to/video.mp4',
-    type: 'video/mp4'
-  }, {
-    src: '//path/to/video.webm',
-    type: 'video/webm'
-  }],
-  techOrder: ['html5', 'flash']
-});
-```
-
-Normally, the fact that HTML5 comes before Flash in the `techOrder` would mean Video.js would look for a compatible _source_ for HTML5 and would pick either the MP4 or WebM video (depending on browser support) only falling back to Flash if no compatible source for HTML5 was found.
-
-However, because the `sourceOrder` is `true`, Video.js flips that process around. It will look for a compatible _tech_ for each source in order. Presumably, it would first find a match between the FLV (since it's first in the source order) and the Flash tech.
-
-In summary, the default algorithm is:
-
-* for each tech:
-  * for each source:
-    * if tech can play source, use this tech/source combo
-
-With `sourceOrder: true`, the algorithm becomes:
-
-* for each source:
-  * for each tech:
-    * if tech can play source, use this tech/source combo
+See [the plugins guide][plugins] for more information on Video.js plugins.
 
 ### `sources`
 
@@ -275,9 +237,9 @@ Using `<source>` elements will have the same effect:
 
 ### `techOrder`
 
-> Type: `Array`, Default: `['html5', 'flash']`
+> Type: `Array`, Default: `['html5']`
 
-Defines the order in which Video.js techs are preferred. By default, this means that the `Html5` tech is preferred, but Video.js will fall back to `Flash` if no `Html5`-compatible source can be found.
+Defines the order in which Video.js techs are preferred. By default, this means that the `Html5` tech is preferred. Other regisetered techs will be added after this tech in the order in which they are registered.
 
 ### `vtt.js`
 
@@ -285,13 +247,13 @@ Defines the order in which Video.js techs are preferred. By default, this means 
 
 Allows overriding the default URL to vtt.js, which may be loaded asynchronously to polyfill support for `WebVTT`.
 
-This option will be used in the "novtt" build of video.js (i.e. `video.novtt.js`). Otherwise, vtt.js is bundled with video.js.
+This option will be used in the "novtt" build of Video.js (i.e. `video.novtt.js`). Otherwise, vtt.js is bundled with Video.js.
 
 ## Component Options
 
 The Video.js player is a component. Like all components, you can define what children it includes, what order they appear in, and what options are passed to them.
 
-This is meant to be a quick reference; so, for more detailed information on components in Video.js, check out the [components guide](components.md).
+This is meant to be a quick reference; so, for more detailed information on components in Video.js, check out the [components guide](/docs/guides/components.md).
 
 ### `children`
 
@@ -318,7 +280,7 @@ The `children` options can also be passed as an `Object`. In this case, it is us
 videojs('my-player', {
   children: {
     controlBar: {
-      fullscreenControl: false
+      fullscreenToggle: false
     }
   }
 });
@@ -333,7 +295,7 @@ Components can be given custom options via the _lower-camel-case variant of the 
 ```js
 videojs('my-player', {
   controlBar: {
-    fullscreenControl: false
+    fullscreenToggle: false
   }
 });
 ```
@@ -346,7 +308,11 @@ videojs('my-player', {
 
 Video.js playback technologies (i.e. "techs") can be given custom options as part of the options passed to the `videojs` function. They should be passed under the _lower-case variant of the tech name_ (e.g. `"flash"` or `"html5"`).
 
-This is not used in most implementations, but one case where it may be is dictating where the Video.js SWF file is located for the `Flash` tech:
+### `flash`
+
+#### `swf`
+
+Specifies where the Video.js SWF file is located for the `Flash` tech:
 
 ```js
 videojs('my-player', {
@@ -356,11 +322,13 @@ videojs('my-player', {
 });
 ```
 
-However, this is a case where changing the global defaults is more useful:
+However, changing the global defaults is generally more appropriate:
 
 ```js
 videojs.options.flash.swf = '//path/to/videojs.swf'
 ```
+
+### `html5`
 
 #### `nativeControlsForTouch`
 
@@ -368,14 +336,32 @@ videojs.options.flash.swf = '//path/to/videojs.swf'
 
 Only supported by the `Html5` tech, this option can be set to `true` to force native controls for touch devices.
 
+#### `nativeAudioTracks`
+
+> Type: `boolean`
+
+Can be set to `false` to disable native audio track support. Most commonly used with [videojs-contrib-hls][videojs-contrib-hls].
+
 #### `nativeTextTracks`
 
 > Type: `boolean`
 
 Can be set to `false` to force emulation of text tracks instead of native support. The `nativeCaptions` option also exists, but is simply an alias to `nativeTextTracks`.
 
+#### `nativeVideoTracks`
+
+> Type: `boolean`
+
+Can be set to `false` to disable native video track support. Most commonly used with [videojs-contrib-hls][videojs-contrib-hls].
+
+[plugins]: /docs/guides/plugins.md
+
+[languages]: /docs/guides/languages.md
+
 [ios-10-updates]: https://webkit.org/blog/6784/new-video-policies-for-ios/
 
 [lang-codes]: http://www.iana.org/assignments/language-subtag-registry/language-subtag-registry
 
 [video-attrs]: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video#Attributes
+
+[videojs-contrib-hls]: https://github.com/videojs/videojs-contrib-hls

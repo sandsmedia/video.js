@@ -1,7 +1,6 @@
 /* eslint-env qunit */
 import Tech from '../../../src/js/tech/tech.js';
 import Html5 from '../../../src/js/tech/html5.js';
-import Flash from '../../../src/js/tech/flash.js';
 import Button from '../../../src/js/button.js';
 import { createTimeRange } from '../../../src/js/utils/time-ranges.js';
 import extendFn from '../../../src/js/extend.js';
@@ -26,6 +25,23 @@ QUnit.module('Media Tech', {
     this.clock.restore();
     Tech.prototype.featuresProgessEvents = this.featuresProgessEvents;
   }
+});
+
+QUnit.test('Tech.registerTech and Tech.getTech', function(assert) {
+  const MyTech = extendFn(Tech);
+  const oldTechs = Tech.techs_;
+  const oldDefaultTechOrder = Tech.defaultTechOrder_;
+
+  Tech.registerTech('MyTech', MyTech);
+
+  assert.ok(Tech.techs_.MyTech, 'Tech is stored in the global list');
+  assert.notEqual(Tech.defaultTechOrder_.indexOf('MyTech'), -1, 'Tech is stored in the defaultTechOrder array');
+  assert.strictEqual(Tech.getTech('myTech'), MyTech, 'can get a tech using `camelCase` name');
+  assert.strictEqual(Tech.getTech('MyTech'), MyTech, 'can get a tech using `titleCase` name');
+
+  // reset techs and defaultTechOrder
+  Tech.techs_ = oldTechs;
+  Tech.defaultTechOrder_ = oldDefaultTechOrder;
 });
 
 QUnit.test('should synthesize timeupdate events by default', function(assert) {
@@ -139,11 +155,11 @@ QUnit.test('dispose() should clear all tracks that are added after creation', fu
   tech.addRemoteTextTrack({}, true);
   tech.addRemoteTextTrack({}, true);
 
-  tech.audioTracks().addTrack_(new AudioTrack());
-  tech.audioTracks().addTrack_(new AudioTrack());
+  tech.audioTracks().addTrack(new AudioTrack());
+  tech.audioTracks().addTrack(new AudioTrack());
 
-  tech.videoTracks().addTrack_(new VideoTrack());
-  tech.videoTracks().addTrack_(new VideoTrack());
+  tech.videoTracks().addTrack(new VideoTrack());
+  tech.videoTracks().addTrack(new VideoTrack());
 
   assert.equal(tech.audioTracks().length, 2, 'should have two audio tracks at the start');
   assert.equal(tech.videoTracks().length, 2, 'should have two video tracks at the start');
@@ -198,11 +214,14 @@ QUnit.test('switching sources should clear all remote tracks that are added with
 
   const tech = new MyTech();
 
+  tech.triggerReady();
+
   // set the initial source
   tech.setSource({src: 'foo.mp4', type: 'mp4'});
 
   // default value for manualCleanup is true
   tech.addRemoteTextTrack({});
+  this.clock.tick(1);
 
   assert.equal(warning,
                'Calling addRemoteTextTrack without explicitly setting the "manualCleanup" parameter to `true` is deprecated and default to `false` in future version of video.js',
@@ -210,6 +229,7 @@ QUnit.test('switching sources should clear all remote tracks that are added with
 
   // should be automatically cleaned up when source changes
   tech.addRemoteTextTrack({}, false);
+  this.clock.tick(1);
 
   assert.equal(tech.textTracks().length, 2, 'should have two text tracks at the start');
   assert.equal(tech.remoteTextTrackEls().length,
@@ -222,6 +242,7 @@ QUnit.test('switching sources should clear all remote tracks that are added with
 
   // change source to force cleanup of auto remote text tracks
   tech.setSource({src: 'bar.mp4', type: 'mp4'});
+  this.clock.tick(1);
 
   assert.equal(tech.textTracks().length,
                1,
@@ -354,11 +375,11 @@ QUnit.test('should add the source handler interface to a tech', function(assert)
   tech.addRemoteTextTrack({}, true);
   tech.addRemoteTextTrack({}, true);
 
-  tech.audioTracks().addTrack_(new AudioTrack());
-  tech.audioTracks().addTrack_(new AudioTrack());
+  tech.audioTracks().addTrack(new AudioTrack());
+  tech.audioTracks().addTrack(new AudioTrack());
 
-  tech.videoTracks().addTrack_(new VideoTrack());
-  tech.videoTracks().addTrack_(new VideoTrack());
+  tech.videoTracks().addTrack(new VideoTrack());
+  tech.videoTracks().addTrack(new VideoTrack());
 
   assert.equal(tech.audioTracks().length, 2, 'should have two audio tracks at the start');
   assert.equal(tech.videoTracks().length, 2, 'should have two video tracks at the start');
@@ -498,56 +519,11 @@ QUnit.test('Tech.isTech returns correct answers for techs and components', funct
   assert.ok(isTech(Tech), 'Tech is a Tech');
   assert.ok(isTech(Html5), 'Html5 is a Tech');
   assert.ok(isTech(new Html5({}, {})), 'An html5 instance is a Tech');
-  assert.ok(isTech(Flash), 'Flash is a Tech');
   assert.ok(!isTech(5), 'A number is not a Tech');
   assert.ok(!isTech('this is a tech'), 'A string is not a Tech');
   assert.ok(!isTech(Button), 'A Button is not a Tech');
   assert.ok(!isTech(new Button({}, {})), 'A Button instance is not a Tech');
   assert.ok(!isTech(isTech), 'A function is not a Tech');
-});
-
-QUnit.test('Tech#setSource clears currentSource_ after repeated loadstart', function(assert) {
-  let disposed = false;
-  const MyTech = extendFn(Tech);
-
-  Tech.withSourceHandlers(MyTech);
-  const tech = new MyTech();
-
-  const sourceHandler = {
-    canPlayType(type) {
-      return true;
-    },
-    canHandleSource(source, options) {
-      return true;
-    },
-    handleSource(source, tech_, options) {
-      return {
-        dispose() {
-          disposed = true;
-        }
-      };
-    }
-  };
-
-  // Test registering source handlers
-  MyTech.registerSourceHandler(sourceHandler);
-
-  // First loadstart
-  tech.setSource('test');
-  tech.currentSource_ = 'test';
-  tech.trigger('loadstart');
-  assert.equal(tech.currentSource_, 'test', 'Current source is test');
-
-  // Second loadstart
-  tech.trigger('loadstart');
-  assert.equal(tech.currentSource_, null, 'Current source is null');
-  assert.equal(disposed, true, 'disposed is true');
-
-  // Third loadstart
-  tech.currentSource_ = 'test';
-  tech.trigger('loadstart');
-  assert.equal(tech.currentSource_, null, 'Current source is still null');
-
 });
 
 QUnit.test('setSource after tech dispose should dispose source handler once', function(assert) {
@@ -631,3 +607,8 @@ QUnit.test('setSource after previous setSource should dispose source handler onc
 
 });
 
+QUnit.test('returns an empty object for getVideoPlaybackQuality', function(assert) {
+  const tech = new Tech();
+
+  assert.deepEqual(tech.getVideoPlaybackQuality(), {}, 'returns an empty object');
+});

@@ -4,15 +4,18 @@
  // Subclasses Component
 import Component from './component.js';
 
+import {version} from '../../package.json';
 import document from 'global/document';
 import window from 'global/window';
+import tsml from 'tsml';
+import evented from './mixins/evented';
 import * as Events from './utils/events.js';
 import * as Dom from './utils/dom.js';
 import * as Fn from './utils/fn.js';
 import * as Guid from './utils/guid.js';
 import * as browser from './utils/browser.js';
 import log from './utils/log.js';
-import toTitleCase from './utils/to-title-case.js';
+import toTitleCase, { titleCaseEquals } from './utils/to-title-case.js';
 import { createTimeRange } from './utils/time-ranges.js';
 import { bufferedPercent } from './utils/buffer.js';
 import * as stylesheet from './utils/stylesheet.js';
@@ -24,14 +27,14 @@ import mergeOptions from './utils/merge-options.js';
 import textTrackConverter from './tracks/text-track-list-converter.js';
 import ModalDialog from './modal-dialog';
 import Tech from './tech/tech.js';
-import AudioTrackList from './tracks/audio-track-list.js';
-import VideoTrackList from './tracks/video-track-list.js';
+import * as middleware from './tech/middleware.js';
+import {ALL as TRACK_TYPES} from './tracks/track-types';
+import filterSource from './utils/filter-source';
 
 // The following imports are used only to ensure that the corresponding modules
 // are always included in the video.js package. Importing the modules will
 // execute them and they will register themselves with video.js.
 import './tech/loader.js';
-import './tech/flash.js';
 import './poster-image.js';
 import './tracks/text-track-display.js';
 import './loading-spinner.js';
@@ -145,7 +148,7 @@ const TECH_EVENTS_RETRIGGER = [
   /**
    * Fires when the browser has loaded the current frame of the audio/video.
    *
-   * @event player#loadeddata
+   * @event Player#loadeddata
    * @type {event}
    */
   /**
@@ -161,7 +164,7 @@ const TECH_EVENTS_RETRIGGER = [
   /**
    * Fires when the current playback position has changed.
    *
-   * @event player#timeupdate
+   * @event Player#timeupdate
    * @type {event}
    */
   /**
@@ -177,7 +180,7 @@ const TECH_EVENTS_RETRIGGER = [
   /**
    * Fires when the playing speed of the audio/video is changed
    *
-   * @event player#ratechange
+   * @event Player#ratechange
    * @type {event}
    */
   /**
@@ -191,9 +194,25 @@ const TECH_EVENTS_RETRIGGER = [
   'ratechange',
 
   /**
+   * Fires when the video's intrinsic dimensions change
+   *
+   * @event Player#resize
+   * @type {event}
+   */
+  /**
+   * Retrigger the `resize` event that was triggered by the {@link Tech}.
+   *
+   * @private
+   * @method Player#handleTechResize_
+   * @fires Player#resize
+   * @listens Tech#resize
+   */
+  'resize',
+
+  /**
    * Fires when the volume has been changed
    *
-   * @event player#volumechange
+   * @event Player#volumechange
    * @type {event}
    */
   /**
@@ -209,7 +228,7 @@ const TECH_EVENTS_RETRIGGER = [
   /**
    * Fires when the text track has been changed
    *
-   * @event player#texttrackchange
+   * @event Player#texttrackchange
    * @type {event}
    */
   /**
@@ -281,7 +300,7 @@ class Player extends Component {
         let element = tag;
 
         while (element && element.nodeType === 1) {
-          if (Dom.getElAttributes(element).hasOwnProperty('lang')) {
+          if (Dom.getAttributes(element).hasOwnProperty('lang')) {
             options.language = element.getAttribute('lang');
             break;
           }
@@ -292,6 +311,9 @@ class Player extends Component {
 
     // Run base component initializing with new options
     super(null, options, ready);
+
+    // Turn off API access because we're loading a new tech that might load asynchronously
+    this.isReady_ = false;
 
     // if the global option object was accidentally blown away by
     // someone, bail early with an informative error
@@ -307,7 +329,7 @@ class Player extends Component {
     this.tag = tag;
 
     // Store the tag attributes used to restore html5 element
-    this.tagAttributes = tag && Dom.getElAttributes(tag);
+    this.tagAttributes = tag && Dom.getAttributes(tag);
 
     // Update current language
     this.language(this.options_.language);
@@ -334,6 +356,9 @@ class Player extends Component {
     // Set controls
     this.controls_ = !!options.controls;
 
+    // Set default values for lastVolume
+    this.cache_.lastVolume = 1;
+
     // Original tag settings stored in options
     // now remove immediately so native controls don't flash.
     // May be turned back on by HTML5 tech if nativeControlsForTouch is true
@@ -349,6 +374,9 @@ class Player extends Component {
 
     this.el_ = this.createEl();
 
+    // Make this an evented object and use `el_` as its event bus.
+    evented(this, {eventBusKey: 'el_'});
+
     // We also want to pass the original player options to each component and plugin
     // as well so they don't need to reach back into the player for options later.
     // We also need to do another copy of this.options_ so we don't end up with
@@ -359,16 +387,18 @@ class Player extends Component {
     if (options.plugins) {
       const plugins = options.plugins;
 
-      Object.getOwnPropertyNames(plugins).forEach(function(name) {
+      Object.keys(plugins).forEach(function(name) {
         if (typeof this[name] === 'function') {
           this[name](plugins[name]);
         } else {
-          log.error('Unable to find plugin:', name);
+          throw new Error(`plugin "${name}" does not exist`);
         }
       }, this);
     }
 
     this.options_.playerOptions = playerOptionsCopy;
+
+    this.middleware_ = [];
 
     this.initChildren();
 
@@ -386,9 +416,9 @@ class Player extends Component {
     // Set ARIA label and region role depending on player type
     this.el_.setAttribute('role', 'region');
     if (this.isAudio()) {
-      this.el_.setAttribute('aria-label', 'audio player');
+      this.el_.setAttribute('aria-label', this.localize('Audio Player'));
     } else {
-      this.el_.setAttribute('aria-label', 'video player');
+      this.el_.setAttribute('aria-label', this.localize('Video Player'));
     }
 
     if (this.isAudio()) {
@@ -413,6 +443,11 @@ class Player extends Component {
     // Make player easily findable by ID
     Player.players[this.id_] = this;
 
+    // Add a major version class to aid css in plugins
+    const majorVersion = version.split('.')[0];
+
+    this.addClass(`vjs-v${majorVersion}`);
+
     // When the player is first initialized, trigger activity so components
     // like the control bar show themselves if needed
     this.userActive(true);
@@ -421,6 +456,8 @@ class Player extends Component {
 
     this.on('fullscreenchange', this.handleFullscreenChange_);
     this.on('stageclick', this.handleStageClick_);
+
+    this.changingSrc_ = false;
   }
 
   /**
@@ -481,13 +518,16 @@ class Player extends Component {
       el = this.el_ = super.createEl('div');
     }
 
+    // set tabindex to -1 so we could focus on the player element
+    tag.setAttribute('tabindex', '-1');
+
     // Remove width/height attrs from tag so CSS can make it 100% width/height
     tag.removeAttribute('width');
     tag.removeAttribute('height');
 
     // Copy over all the attributes from the tag, including ID and class
     // ID will now reference player box, not the video tag
-    const attrs = Dom.getElAttributes(tag);
+    const attrs = Dom.getAttributes(tag);
 
     Object.getOwnPropertyNames(attrs).forEach(function(attr) {
       // workaround so we don't totally break IE7
@@ -534,7 +574,7 @@ class Player extends Component {
     for (let i = 0; i < links.length; i++) {
       const linkEl = links.item(i);
 
-      Dom.addElClass(linkEl, 'vjs-hidden');
+      Dom.addClass(linkEl, 'vjs-hidden');
       linkEl.setAttribute('hidden', 'hidden');
     }
 
@@ -552,8 +592,12 @@ class Player extends Component {
     // will work properly for other components
     //
     // Breaks iPhone, fixed in HTML5 setup.
-    Dom.insertElFirst(tag, el);
+    Dom.prependTo(tag, el);
     this.children_.unshift(tag);
+
+    // Set lang attr on player to ensure CSS :lang() in consistent with player
+    // if it's been set to something different to the doc
+    this.el_.setAttribute('lang', this.language_);
 
     this.el_ = el;
 
@@ -567,7 +611,7 @@ class Player extends Component {
    *        The value to set the `Player's width to.
    *
    * @return {number}
-   *         The current width of the `Player`.
+   *         The current width of the `Player` when getting.
    */
   width(value) {
     return this.dimension('width', value);
@@ -580,7 +624,7 @@ class Player extends Component {
    *        The value to set the `Player's heigth to.
    *
    * @return {number}
-   *         The current heigth of the `Player`.
+   *         The current height of the `Player` when getting.
    */
   height(value) {
     return this.dimension('height', value);
@@ -597,9 +641,8 @@ class Player extends Component {
    * @param {number} [value]
    *        Value for dimension specified in the first argument.
    *
-   * @return {Player|number}
-   *         - Returns itself when setting; method can be chained.
-   *         - The dimension arguments value when getting (width/height).
+   * @return {number}
+   *         The dimension arguments value when getting (width/height).
    */
   dimension(dimension, value) {
     const privDimension = dimension + '_';
@@ -616,14 +659,13 @@ class Player extends Component {
 
       if (isNaN(parsedVal)) {
         log.error(`Improper value "${value}" supplied for for ${dimension}`);
-        return this;
+        return;
       }
 
       this[privDimension] = parsedVal;
     }
 
     this.updateStyleEl_();
-    return this;
   }
 
   /**
@@ -797,28 +839,29 @@ class Player extends Component {
       this.unloadTech_();
     }
 
+    const titleTechName = toTitleCase(techName);
+    const camelTechName = techName.charAt(0).toLowerCase() + techName.slice(1);
+
     // get rid of the HTML5 video tag as soon as we are using another tech
-    if (techName !== 'Html5' && this.tag) {
+    if (titleTechName !== 'Html5' && this.tag) {
       Tech.getTech('Html5').disposeMediaElement(this.tag);
       this.tag.player = null;
       this.tag = null;
     }
 
-    this.techName_ = techName;
+    this.techName_ = titleTechName;
 
     // Turn off API access because we're loading a new tech that might load asynchronously
     this.isReady_ = false;
 
     // Grab tech-specific options from player options and add source and parent element to use.
-    const techOptions = assign({
+    const techOptions = {
       source,
       'nativeControlsForTouch': this.options_.nativeControlsForTouch,
       'playerId': this.id(),
-      'techId': `${this.id()}_${techName}_api`,
-      'videoTracks': this.videoTracks_,
-      'textTracks': this.textTracks_,
-      'audioTracks': this.audioTracks_,
+      'techId': `${this.id()}_${titleTechName}_api`,
       'autoplay': this.options_.autoplay,
+      'playsinline': this.options_.playsinline,
       'preload': this.options_.preload,
       'loop': this.options_.loop,
       'muted': this.options_.muted,
@@ -826,33 +869,34 @@ class Player extends Component {
       'language': this.language(),
       'playerElIngest': this.playerElIngest_ || false,
       'vtt.js': this.options_['vtt.js']
-    }, this.options_[techName.toLowerCase()]);
+    };
+
+    TRACK_TYPES.names.forEach((name) => {
+      const props = TRACK_TYPES[name];
+
+      techOptions[props.getterName] = this[props.privateName];
+    });
+
+    assign(techOptions, this.options_[titleTechName]);
+    assign(techOptions, this.options_[camelTechName]);
+    assign(techOptions, this.options_[techName.toLowerCase()]);
 
     if (this.tag) {
       techOptions.tag = this.tag;
     }
 
-    if (source) {
-      this.currentType_ = source.type;
-
-      if (source.src === this.cache_.src && this.cache_.currentTime > 0) {
-        techOptions.startTime = this.cache_.currentTime;
-      }
-
-      this.cache_.sources = null;
-      this.cache_.source = source;
-      this.cache_.src = source.src;
+    if (source && source.src === this.cache_.src && this.cache_.currentTime > 0) {
+      techOptions.startTime = this.cache_.currentTime;
     }
 
     // Initialize tech instance
-    let TechComponent = Tech.getTech(techName);
+    const TechClass = Tech.getTech(techName);
 
-    // Support old behavior of techs being registered as components.
-    // Remove once that deprecated behavior is removed.
-    if (!TechComponent) {
-      TechComponent = Component.getComponent(techName);
+    if (!TechClass) {
+      throw new Error(`No Tech named '${titleTechName}' exists! '${titleTechName}' should be registered using videojs.registerTech()'`);
     }
-    this.tech_ = new TechComponent(techOptions);
+
+    this.tech_ = new TechClass(techOptions);
 
     // player.triggerReady is always async, so don't need this to be async
     this.tech_.ready(Fn.bind(this, this.handleTechReady_), true);
@@ -889,8 +933,8 @@ class Player extends Component {
 
     // Add the tech element in the DOM if it was not already there
     // Make sure to not insert the original video element if using Html5
-    if (this.tech_.el().parentNode !== this.el() && (techName !== 'Html5' || !this.tag)) {
-      Dom.insertElFirst(this.tech_.el(), this.el());
+    if (this.tech_.el().parentNode !== this.el() && (titleTechName !== 'Html5' || !this.tag)) {
+      Dom.prependTo(this.tech_.el(), this.el());
     }
 
     // Get rid of the original video tag reference after the first tech is loaded
@@ -907,9 +951,11 @@ class Player extends Component {
    */
   unloadTech_() {
     // Save the current text tracks so that we can reuse the same text tracks with the next tech
-    this.videoTracks_ = this.videoTracks();
-    this.textTracks_ = this.textTracks();
-    this.audioTracks_ = this.audioTracks();
+    TRACK_TYPES.names.forEach((name) => {
+      const props = TRACK_TYPES[name];
+
+      this[props.privateName] = this[props.getterName]();
+    });
     this.textTracksJson_ = textTrackConverter.textTracksToJson(this.tech_);
 
     this.isReady_ = false;
@@ -920,32 +966,25 @@ class Player extends Component {
   }
 
   /**
-   * Return a reference to the current {@link Tech}, but only if given an object with the
-   * `IWillNotUseThisInPlugins` property having a true value. This is try and prevent misuse
-   * of techs by plugins.
+   * Return a reference to the current {@link Tech}.
+   * It will print a warning by default about the danger of using the tech directly
+   * but any argument that is passed in will silence the warning.
    *
-   * @param {Object} safety
-   *        An object that must contain `{IWillNotUseThisInPlugins: true}`
-   *
-   * @param {boolean} safety.IWillNotUseThisInPlugins
-   *        Must be set to true or else this function will throw an error.
+   * @param {*} [safety]
+   *        Anything passed in to silence the warning
    *
    * @return {Tech}
    *         The Tech
    */
   tech(safety) {
-    if (safety && safety.IWillNotUseThisInPlugins) {
-      return this.tech_;
+    if (safety === undefined) {
+      log.warn(tsml`
+        Using the tech directly can be dangerous. I hope you know what you're doing.
+        See https://github.com/videojs/video.js/issues/2617 for more info.
+      `);
     }
-    const errorText = `
-      Please make sure that you are not using this inside of a plugin.
-      To disable this alert and error, please pass in an object with
-      \`IWillNotUseThisInPlugins\` to the \`tech\` method. See
-      https://github.com/videojs/video.js/issues/2617 for more info.
-    `;
 
-    window.alert(errorText);
-    throw new Error(errorText);
+    return this.tech_;
   }
 
   /**
@@ -1104,7 +1143,7 @@ class Player extends Component {
           this.removeClass('vjs-has-started');
         }
       }
-      return this;
+      return;
     }
     return !!this.hasStarted_;
   }
@@ -1250,7 +1289,8 @@ class Player extends Component {
    *
    * @fires Player#firstplay
    * @listens Tech#firstplay
-   * @deprecated As of 6.0 passing the `starttime` option to the player will be deprecated
+   * @deprecated As of 6.0 firstplay event is deprecated.
+   * @deprecated As of 6.0 passing the `starttime` option to the player and the firstplay event are deprecated.
    * @private
    */
   handleTechFirstPlay_() {
@@ -1268,6 +1308,7 @@ class Player extends Component {
      * reason to prevent playback, use `myPlayer.one('play');` instead.
      *
      * @event Player#firstplay
+     * @deprecated As of 6.0 firstplay event is deprecated.
      * @type {EventTarget~Event}
      */
     this.trigger('firstplay');
@@ -1512,13 +1553,12 @@ class Player extends Component {
    */
   techCall_(method, arg) {
     // If it's not ready yet, call method when it is
-    if (this.tech_ && !this.tech_.isReady_) {
-      this.tech_.ready(function() {
-        this[method](arg);
-      }, true);
 
-    // Otherwise call method now
-    } else {
+    this.ready(function() {
+      if (method in middleware.allowedSetters) {
+        return middleware.set(this.middleware_, this.tech_, method, arg);
+      }
+
       try {
         if (this.tech_) {
           this.tech_[method](arg);
@@ -1527,7 +1567,7 @@ class Player extends Component {
         log(e);
         throw e;
       }
-    }
+    }, true);
   }
 
   /**
@@ -1543,6 +1583,10 @@ class Player extends Component {
    */
   techGet_(method) {
     if (this.tech_ && this.tech_.isReady_) {
+
+      if (method in middleware.allowedGetters) {
+        return middleware.get(this.middleware_, this.tech_, method);
+      }
 
       // Flash likes to die and reload when you hide or reposition it.
       // In these cases the object methods go away and we get errors.
@@ -1571,20 +1615,36 @@ class Player extends Component {
   /**
    * start media playback
    *
-   * @return {Player}
-   *         A reference to the player object this function was called on
+   * @return {Promise|undefined}
+   *         Returns a `Promise` if the browser returns one, for most browsers this will
+   *         return undefined.
    */
   play() {
+    if (this.changingSrc_) {
+      this.ready(function() {
+        const retval = this.techGet_('play');
+
+        // silence errors (unhandled promise from play)
+        if (retval !== undefined && typeof retval.then === 'function') {
+          retval.then(null, (e) => {});
+        }
+      });
+
     // Only calls the tech's play if we already have a src loaded
-    if (this.src() || this.currentSrc()) {
-      this.techCall_('play');
+    } else if (this.isReady_ && (this.src() || this.currentSrc())) {
+      return this.techGet_('play');
     } else {
-      this.tech_.one('loadstart', function() {
-        this.play();
+      this.ready(function() {
+        this.tech_.one('loadstart', function() {
+          const retval = this.play();
+
+          // silence errors (unhandled promise from play)
+          if (retval !== undefined && typeof retval.then === 'function') {
+            retval.then(null, (e) => {});
+          }
+        });
       });
     }
-
-    return this;
   }
 
   /**
@@ -1595,7 +1655,6 @@ class Player extends Component {
    */
   pause() {
     this.techCall_('pause');
-    return this;
   }
 
   /**
@@ -1611,6 +1670,18 @@ class Player extends Component {
   }
 
   /**
+   * Get a TimeRange object representing the current ranges of time that the user
+   * has played.
+   *
+   * @return {TimeRange}
+   *         A time range object that represents all the increments of time that have
+   *         been played.
+   */
+  played() {
+    return this.techGet_('played') || createTimeRange(0, 0);
+  }
+
+  /**
    * Returns whether or not the user is "scrubbing". Scrubbing is
    * when the user has clicked the progress bar handle and is
    * dragging it along the progress bar.
@@ -1618,24 +1689,20 @@ class Player extends Component {
    * @param {boolean} [isScrubbing]
    *        wether the user is or is not scrubbing
    *
-   * @return {boolean|Player}
-   *         A instance of the player that called this function when setting,
-   *         and the value of scrubbing when getting
+   * @return {boolean}
+   *         The value of scrubbing when getting
    */
   scrubbing(isScrubbing) {
-    if (isScrubbing !== undefined) {
-      this.scrubbing_ = !!isScrubbing;
-
-      if (isScrubbing) {
-        this.addClass('vjs-scrubbing');
-      } else {
-        this.removeClass('vjs-scrubbing');
-      }
-
-      return this;
+    if (typeof isScrubbing === 'undefined') {
+      return this.scrubbing_;
     }
+    this.scrubbing_ = !!isScrubbing;
 
-    return this.scrubbing_;
+    if (isScrubbing) {
+      this.addClass('vjs-scrubbing');
+    } else {
+      this.removeClass('vjs-scrubbing');
+    }
   }
 
   /**
@@ -1644,16 +1711,13 @@ class Player extends Component {
    * @param {number|string} [seconds]
    *        The time to seek to in seconds
    *
-   * @return {Player|number}
+   * @return {number}
    *         - the current time in seconds when getting
-   *         - a reference to the current player object when setting
    */
   currentTime(seconds) {
-    if (seconds !== undefined) {
-
+    if (typeof seconds !== 'undefined') {
       this.techCall_('setCurrentTime', seconds);
-
-      return this;
+      return;
     }
 
     // cache last currentTime and return. default to 0 seconds
@@ -1679,17 +1743,16 @@ class Player extends Component {
    * @param {number} [seconds]
    *        The duration of the video to set in seconds
    *
-   * @return {number|Player}
+   * @return {number}
    *         - The duration of the video in seconds when getting
-   *         - A reference to the player that called this function
-   *           when setting
    */
   duration(seconds) {
     if (seconds === undefined) {
-      return this.cache_.duration || 0;
+      // return NaN if the duration is not known
+      return this.cache_.duration !== undefined ? this.cache_.duration : NaN;
     }
 
-    seconds = parseFloat(seconds) || 0;
+    seconds = parseFloat(seconds);
 
     // Standardize on Inifity for signaling video is live
     if (seconds < 0) {
@@ -1711,8 +1774,6 @@ class Player extends Component {
        */
       this.trigger('durationchange');
     }
-
-    return this;
   }
 
   /**
@@ -1789,9 +1850,8 @@ class Player extends Component {
    *         - 1.0 is 100%/full
    *         - 0.5 is half volume or 50%
    *
-   * @return {Player|number}
-   *         a reference to the calling player when setting and the
-   *         current volume as a percent when getting
+   * @return {number}
+   *         The current volume as a percent when getting
    */
   volume(percentAsDecimal) {
     let vol;
@@ -1802,7 +1862,11 @@ class Player extends Component {
       this.cache_.volume = vol;
       this.techCall_('setVolume', vol);
 
-      return this;
+      if (vol > 0) {
+        this.lastVolume_(vol);
+      }
+
+      return;
     }
 
     // Default to 1 when returning current volume.
@@ -1817,17 +1881,71 @@ class Player extends Component {
    *        - true to mute
    *        - false to unmute
    *
-   * @return {boolean|Player}
+   * @return {boolean}
    *         - true if mute is on and getting
    *         - false if mute is off and getting
-   *         - A reference to the current player when setting
    */
   muted(muted) {
     if (muted !== undefined) {
       this.techCall_('setMuted', muted);
-      return this;
+      return;
     }
     return this.techGet_('muted') || false;
+  }
+
+  /**
+   * Get the current defaultMuted state, or turn defaultMuted on or off. defaultMuted
+   * indicates the state of muted on intial playback.
+   *
+   * ```js
+   *   var myPlayer = videojs('some-player-id');
+   *
+   *   myPlayer.src("http://www.example.com/path/to/video.mp4");
+   *
+   *   // get, should be false
+   *   console.log(myPlayer.defaultMuted());
+   *   // set to true
+   *   myPlayer.defaultMuted(true);
+   *   // get should be true
+   *   console.log(myPlayer.defaultMuted());
+   * ```
+   *
+   * @param {boolean} [defaultMuted]
+   *        - true to mute
+   *        - false to unmute
+   *
+   * @return {boolean|Player}
+   *         - true if defaultMuted is on and getting
+   *         - false if defaultMuted is off and getting
+   *         - A reference to the current player when setting
+   */
+  defaultMuted(defaultMuted) {
+    if (defaultMuted !== undefined) {
+      return this.techCall_('setDefaultMuted', defaultMuted);
+    }
+    return this.techGet_('defaultMuted') || false;
+  }
+
+  /**
+   * Get the last volume, or set it
+   *
+   * @param  {number} [percentAsDecimal]
+   *         The new last volume as a decimal percent:
+   *         - 0 is muted/0%/off
+   *         - 1.0 is 100%/full
+   *         - 0.5 is half volume or 50%
+   *
+   * @return {number}
+   *         the current value of lastVolume as a percent when getting
+   *
+   * @private
+   */
+  lastVolume_(percentAsDecimal) {
+    if (percentAsDecimal !== undefined && percentAsDecimal !== 0) {
+      this.cache_.lastVolume = percentAsDecimal;
+      return;
+    }
+    return this.cache_.lastVolume;
   }
 
   /**
@@ -1852,15 +1970,14 @@ class Player extends Component {
    * @param  {boolean} [isFS]
    *         Set the players current fullscreen state
    *
-   * @return {boolean|Player}
+   * @return {boolean}
    *         - true if fullscreen is on and getting
    *         - false if fullscreen is off and getting
-   *         - A reference to the current player when setting
    */
   isFullscreen(isFS) {
     if (isFS !== undefined) {
       this.isFullscreen_ = !!isFS;
-      return this;
+      return;
     }
     return !!this.isFullscreen_;
   }
@@ -1875,8 +1992,6 @@ class Player extends Component {
    * Safari.
    *
    * @fires Player#fullscreenchange
-   * @return {Player}
-   *         A reference to the current player
    */
   requestFullscreen() {
     const fsApi = FullscreenApi;
@@ -1922,17 +2037,12 @@ class Player extends Component {
        */
       this.trigger('fullscreenchange');
     }
-
-    return this;
   }
 
   /**
    * Return the video to its normal size after having been in full screen mode
    *
    * @fires Player#fullscreenchange
-   *
-   * @return {Player}
-   *         A reference to the current player
    */
   exitFullscreen() {
     const fsApi = FullscreenApi;
@@ -1952,8 +2062,6 @@ class Player extends Component {
        */
       this.trigger('fullscreenchange');
     }
-
-    return this;
   }
 
   /**
@@ -1975,7 +2083,7 @@ class Player extends Component {
     document.documentElement.style.overflow = 'hidden';
 
     // Apply fullscreen styles
-    Dom.addElClass(document.body, 'vjs-full-window');
+    Dom.addClass(document.body, 'vjs-full-window');
 
     /**
      * @event Player#enterFullWindow
@@ -2014,7 +2122,7 @@ class Player extends Component {
     document.documentElement.style.overflow = this.docOrigOverflow;
 
     // Remove fullscreen styles
-    Dom.removeElClass(document.body, 'vjs-full-window');
+    Dom.removeClass(document.body, 'vjs-full-window');
 
     // Resize the box, controller, and poster to original sizes
     // this.positionAll();
@@ -2041,7 +2149,7 @@ class Player extends Component {
 
     // Loop through each playback technology in the options order
     for (let i = 0, j = this.options_.techOrder; i < j.length; i++) {
-      const techName = toTitleCase(j[i]);
+      const techName = j[i];
       let tech = Tech.getTech(techName);
 
       // Support old behavior of techs being registered as components.
@@ -2085,12 +2193,8 @@ class Player extends Component {
     // current platform
     const techs =
       this.options_.techOrder
-        .map(toTitleCase)
         .map((techName) => {
-          // `Component.getComponent(...)` is for support of old behavior of techs
-          // being registered as components.
-          // Remove once that deprecated behavior is removed.
-          return [techName, Tech.getTech(techName) || Component.getComponent(techName)];
+          return [techName, Tech.getTech(techName)];
         })
         .filter(([techName, tech]) => {
           // Check if the current tech is defined before continuing
@@ -2144,140 +2248,146 @@ class Player extends Component {
   }
 
   /**
-   * The source function updates the video source
-   * There are three types of variables you can pass as the argument.
-   * **URL string**: A URL to the the video file. Use this method if you are sure
-   * the current playback technology (HTML5/Flash) can support the source you
-   * provide. Currently only MP4 files can be used in both HTML5 and Flash.
+   * Get or set the video source.
    *
-   * @param {Tech~SourceObject|Tech~SourceObject[]} [source]
-   *        One SourceObject or an array of SourceObjects
+   * @param {Tech~SourceObject|Tech~SourceObject[]|string} [source]
+   *        A SourceObject, an array of SourceObjects, or a string referencing
+   *        a URL to a media source. It is _highly recommended_ that an object
+   *        or array of objects is used here, so that source selection
+   *        algorithms can take the `type` into account.
    *
-   * @return {string|Player}
-   *         - The current video source when getting
-   *         - The player when setting
+   *        If not provided, this method acts as a getter.
+   *
+   * @return {string|undefined}
+   *         If the `source` argument is missing, returns the current source
+   *         URL. Otherwise, returns nothing/undefined.
    */
   src(source) {
-    if (source === undefined) {
-      return this.techGet_('src');
+    // getter usage
+    if (typeof source === 'undefined') {
+      return this.cache_.src;
     }
+    // filter out invalid sources and turn our source into
+    // an array of source objects
+    const sources = filterSource(source);
 
-    let currentTech = Tech.getTech(this.techName_);
-
-    // Support old behavior of techs being registered as components.
-    // Remove once that deprecated behavior is removed.
-    if (!currentTech) {
-      currentTech = Component.getComponent(this.techName_);
-    }
-
-    // case: Array of source objects to choose from and pick the best to play
-    if (Array.isArray(source)) {
-      this.sourceList_(source);
-
-    // case: URL String (http://myvideo...)
-    } else if (typeof source === 'string') {
-      // create a source object from the string
-      this.src({ src: source });
-
-    // case: Source object { src: '', type: '' ... }
-    } else if (source instanceof Object) {
-      // check if the source has a type and the loaded tech cannot play the source
-      // if there's no type we'll just try the current tech
-      if (source.type && !currentTech.canPlaySource(source, this.options_[this.techName_.toLowerCase()])) {
-        // create a source list with the current source and send through
-        // the tech loop to check for a compatible technology
-        this.sourceList_([source]);
-      } else {
-        this.cache_.sources = null;
-        this.cache_.source = source;
-        this.cache_.src = source.src;
-
-        this.currentType_ = source.type || '';
-
-        // wait until the tech is ready to set the source
-        this.ready(function() {
-
-          // The setSource tech method was added with source handlers
-          // so older techs won't support it
-          // We need to check the direct prototype for the case where subclasses
-          // of the tech do not support source handlers
-          if (currentTech.prototype.hasOwnProperty('setSource')) {
-            this.techCall_('setSource', source);
-          } else {
-            this.techCall_('src', source.src);
-          }
-
-          if (this.options_.preload === 'auto') {
-            this.load();
-          }
-
-          if (this.options_.autoplay) {
-            this.play();
-          }
-
-        // Set the source synchronously if possible (#2326)
-        }, true);
-      }
-    }
-
-    return this;
-  }
-
-  /**
-   * Handle an array of source objects
-   *
-   * @param  {Tech~SourceObject[]} sources
-   *         Array of source objects
-   *
-   * @private
-   */
-  sourceList_(sources) {
-    const sourceTech = this.selectSource(sources);
-
-    if (sourceTech) {
-      if (sourceTech.tech === this.techName_) {
-        // if this technology is already loaded, set the source
-        this.src(sourceTech.source);
-      } else {
-        // load this technology with the chosen source
-        this.loadTech_(sourceTech.tech, sourceTech.source);
-      }
-
-      this.cache_.sources = sources;
-    } else {
-      // We need to wrap this in a timeout to give folks a chance to add error event handlers
+    // if a source was passed in then it is invalid because
+    // it was filtered to a zero length Array. So we have to
+    // show an error
+    if (!sources.length) {
       this.setTimeout(function() {
         this.error({ code: 4, message: this.localize(this.options_.notSupportedMessage) });
       }, 0);
-
-      // we could not find an appropriate tech, but let's still notify the delegate that this is it
-      // this needs a better comment about why this is needed
-      this.triggerReady();
+      return;
     }
+
+    // intial sources
+    this.cache_.sources = sources;
+    this.changingSrc_ = true;
+
+    // intial source
+    this.cache_.source = sources[0];
+
+    // middlewareSource is the source after it has been changed by middleware
+    middleware.setSource(this, sources[0], (middlewareSource, mws) => {
+      this.middleware_ = mws;
+
+      const err = this.src_(middlewareSource);
+
+      if (err) {
+        if (sources.length > 1) {
+          return this.src(sources.slice(1));
+        }
+
+        // We need to wrap this in a timeout to give folks a chance to add error event handlers
+        this.setTimeout(function() {
+          this.error({ code: 4, message: this.localize(this.options_.notSupportedMessage) });
+        }, 0);
+
+        // we could not find an appropriate tech, but let's still notify the delegate that this is it
+        // this needs a better comment about why this is needed
+        this.triggerReady();
+
+        return;
+      }
+
+      this.changingSrc_ = false;
+      // video element listed source
+      this.cache_.src = middlewareSource.src;
+
+      middleware.setTech(mws, this.tech_);
+    });
+  }
+
+  /**
+   * Set the source object on the tech, returns a boolean that indicates wether
+   * there is a tech that can play the source or not
+   *
+   * @param {Tech~SourceObject} source
+   *        The source object to set on the Tech
+   *
+   * @return {Boolean}
+   *         - True if there is no Tech to playback this source
+   *         - False otherwise
+   *
+   * @private
+   */
+  src_(source) {
+    const sourceTech = this.selectSource([source]);
+
+    if (!sourceTech) {
+      return true;
+    }
+
+    if (!titleCaseEquals(sourceTech.tech, this.techName_)) {
+      this.changingSrc_ = true;
+
+      // load this technology with the chosen source
+      this.loadTech_(sourceTech.tech, sourceTech.source);
+      return false;
+    }
+
+    // wait until the tech is ready to set the source
+    this.ready(function() {
+
+      // The setSource tech method was added with source handlers
+      // so older techs won't support it
+      // We need to check the direct prototype for the case where subclasses
+      // of the tech do not support source handlers
+      if (this.tech_.constructor.prototype.hasOwnProperty('setSource')) {
+        this.techCall_('setSource', source);
+      } else {
+        this.techCall_('src', source.src);
+      }
+
+      if (this.options_.preload === 'auto') {
+        this.load();
+      }
+
+      if (this.options_.autoplay) {
+        this.play();
+      }
+
+    // Set the source synchronously if possible (#2326)
+    }, true);
+
+    return false;
   }
 
   /**
    * Begin loading the src data.
-   *
-   * @return {Player}
-   *         A reference to the player
    */
   load() {
     this.techCall_('load');
-    return this;
   }
 
   /**
    * Reset the player. Loads the first tech in the techOrder,
    * and calls `reset` on the tech`.
-   *
-   * @return {Player}
-   *         A reference to the player
    */
   reset() {
-    this.loadTech_(toTitleCase(this.options_.techOrder[0]), null);
+    this.loadTech_(this.options_.techOrder[0], null);
     this.techCall_('reset');
-    return this;
   }
 
   /**
@@ -2305,14 +2415,7 @@ class Player extends Component {
    *         The current source object
    */
   currentSource() {
-    const source = {};
-    const src = this.currentSrc();
-
-    if (src) {
-      source.src = src;
-    }
-
-    return this.cache_.source || source;
+    return this.cache_.source || {};
   }
 
   /**
@@ -2323,7 +2426,7 @@ class Player extends Component {
    *         The current source
    */
   currentSrc() {
-    return this.techGet_('currentSrc') || this.cache_.src || '';
+    return this.currentSource() && this.currentSource().src || '';
   }
 
   /**
@@ -2335,7 +2438,7 @@ class Player extends Component {
    *         The source MIME type
    */
   currentType() {
-    return this.currentType_ || '';
+    return this.currentSource() && this.currentSource().type || '';
   }
 
   /**
@@ -2345,15 +2448,14 @@ class Player extends Component {
    *        - true means that we should preload
    *        - false maens that we should not preload
    *
-   * @return {string|Player}
-   *         - the preload attribute value when getting
-   *         - the player when setting
+   * @return {string}
+   *         The preload attribute value when getting
    */
   preload(value) {
     if (value !== undefined) {
       this.techCall_('setPreload', value);
       this.options_.preload = value;
-      return this;
+      return;
     }
     return this.techGet_('preload');
   }
@@ -2363,19 +2465,43 @@ class Player extends Component {
    *
    * @param {boolean} [value]
    *        - true means that we should autoplay
-   *        - false maens that we should not autoplay
+   *        - false means that we should not autoplay
    *
-   * @return {string|Player}
-   *         - the current value of autoplay
-   *         - the player when setting
+   * @return {string}
+   *         The current value of autoplay when getting
    */
   autoplay(value) {
     if (value !== undefined) {
       this.techCall_('setAutoplay', value);
       this.options_.autoplay = value;
-      return this;
+      return;
     }
     return this.techGet_('autoplay', value);
+  }
+
+  /**
+   * Set or unset the playsinline attribute.
+   * Playsinline tells the browser that non-fullscreen playback is preferred.
+   *
+   * @param {boolean} [value]
+   *        - true means that we should try to play inline by default
+   *        - false means that we should use the browser's default playback mode,
+   *          which in most cases is inline. iOS Safari is a notable exception
+   *          and plays fullscreen by default.
+   *
+   * @return {string|Player}
+   *         - the current value of playsinline
+   *         - the player when setting
+   *
+   * @see [Spec]{@link https://html.spec.whatwg.org/#attr-video-playsinline}
+   */
+  playsinline(value) {
+    if (value !== undefined) {
+      this.techCall_('setPlaysinline', value);
+      this.options_.playsinline = value;
+      return this;
+    }
+    return this.techGet_('playsinline');
   }
 
   /**
@@ -2385,15 +2511,14 @@ class Player extends Component {
    *        - true means that we should loop the video
    *        - false means that we should not loop the video
    *
-   * @return {string|Player}
-   *         - the current value of loop when getting
-   *         - the player when setting
+   * @return {string}
+   *         The current value of loop when getting
    */
   loop(value) {
     if (value !== undefined) {
       this.techCall_('setLoop', value);
       this.options_.loop = value;
-      return this;
+      return;
     }
     return this.techGet_('loop');
   }
@@ -2406,9 +2531,8 @@ class Player extends Component {
    * @param {string} [src]
    *        Poster image source URL
    *
-   * @return {string|Player}
-   *         - the current value of poster when getting
-   *         - the player when setting
+   * @return {string}
+   *         The current value of poster when getting
    */
   poster(src) {
     if (src === undefined) {
@@ -2435,8 +2559,6 @@ class Player extends Component {
      * @type {EventTarget~Event}
      */
     this.trigger('posterchange');
-
-    return this;
   }
 
   /**
@@ -2444,7 +2566,7 @@ class Player extends Component {
    * asynchronous way. We want the poster component to use this
    * poster source so that it covers up the tech's controls.
    * (YouTube's play button). However we only want to use this
-   * soruce if the player user hasn't set a poster through
+   * source if the player user hasn't set a poster through
    * the normal APIs.
    *
    * @fires Player#posterchange
@@ -2469,9 +2591,8 @@ class Player extends Component {
    *        - true to turn controls on
    *        - false to turn controls off
    *
-   * @return {boolean|Player}
-   *         - the current value of controls when getting
-   *         - the player when setting
+   * @return {boolean}
+   *         The current value of controls when getting
    */
   controls(bool) {
     if (bool !== undefined) {
@@ -2511,7 +2632,7 @@ class Player extends Component {
           }
         }
       }
-      return this;
+      return;
     }
     return !!this.controls_;
   }
@@ -2530,9 +2651,8 @@ class Player extends Component {
    *        - true to turn native controls on
    *        - false to turn native controls off
    *
-   * @return {boolean|Player}
-   *         - the current value of native controls when getting
-   *         - the player when setting
+   * @return {boolean}
+   *         The current value of native controls when getting
    */
   usingNativeControls(bool) {
     if (bool !== undefined) {
@@ -2563,7 +2683,7 @@ class Player extends Component {
           this.trigger('usingcustomcontrols');
         }
       }
-      return this;
+      return;
     }
     return !!this.usingNativeControls_;
   }
@@ -2577,9 +2697,8 @@ class Player extends Component {
    *         A MediaError or a string/number to be turned
    *         into a MediaError
    *
-   * @return {MediaError|null|Player}
-   *         - The current MediaError when getting (or null)
-   *         - The player when setting
+   * @return {MediaError|null}
+   *         The current MediaError when getting (or null)
    */
   error(err) {
     if (err === undefined) {
@@ -2593,7 +2712,7 @@ class Player extends Component {
       if (this.errorDisplay) {
         this.errorDisplay.close();
       }
-      return this;
+      return;
     }
 
     this.error_ = new MediaError(err);
@@ -2611,7 +2730,7 @@ class Player extends Component {
      */
     this.trigger('error');
 
-    return this;
+    return;
   }
 
   /**
@@ -2633,9 +2752,9 @@ class Player extends Component {
    * @param {boolean} [bool]
    *        - true if the user is active
    *        - false if the user is inactive
-   * @return {boolean|Player}
-   *         - the current value of userActive when getting
-   *         - the player when setting
+   *
+   * @return {boolean}
+   *         The current value of userActive when getting
    */
   userActive(bool) {
     if (bool !== undefined) {
@@ -2682,7 +2801,7 @@ class Player extends Component {
           this.trigger('userinactive');
         }
       }
-      return this;
+      return;
     }
     return this.userActive_;
   }
@@ -2783,18 +2902,43 @@ class Player extends Component {
    * @param {number} [rate]
    *       New playback rate to set.
    *
-   * @return {number|Player}
-   *         - The current playback rate when getting or 1.0
-   *         - the player when setting
+   * @return {number}
+   *         The current playback rate when getting or 1.0
    */
   playbackRate(rate) {
     if (rate !== undefined) {
       this.techCall_('setPlaybackRate', rate);
-      return this;
+      return;
     }
 
     if (this.tech_ && this.tech_.featuresPlaybackRate) {
       return this.techGet_('playbackRate');
+    }
+    return 1.0;
+  }
+
+  /**
+   * Gets or sets the current default playback rate. A default playback rate of
+   * 1.0 represents normal speed and 0.5 would indicate half-speed playback, for instance.
+   * defaultPlaybackRate will only represent what the intial playbackRate of a video was, not
+   * not the current playbackRate.
+   *
+   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-media-defaultplaybackrate
+   *
+   * @param {number} [rate]
+   *       New default playback rate to set.
+   *
+   * @return {number|Player}
+   *         - The default playback rate when getting or 1.0
+   *         - the player when setting
+   */
+  defaultPlaybackRate(rate) {
+    if (rate !== undefined) {
+      return this.techCall_('setDefaultPlaybackRate', rate);
+    }
+
+    if (this.tech_ && this.tech_.featuresPlaybackRate) {
+      return this.techGet_('defaultPlaybackRate');
     }
     return 1.0;
   }
@@ -2806,113 +2950,16 @@ class Player extends Component {
    *        - true signals that this is an audio player
    *        - false signals that this is not an audio player
    *
-   * @return {Player|boolean}
-   *         - the current value of isAudio when getting
-   *         - the player if setting
+   * @return {boolean}
+   *         The current value of isAudio when getting
    */
   isAudio(bool) {
     if (bool !== undefined) {
       this.isAudio_ = !!bool;
-      return this;
+      return;
     }
 
     return !!this.isAudio_;
-  }
-
-  /**
-   * Get the {@link VideoTrackList}
-   *
-   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#videotracklist
-   *
-   * @return {VideoTrackList}
-   *         the current video track list
-   */
-  videoTracks() {
-    // if we have not yet loadTech_, we create videoTracks_
-    // these will be passed to the tech during loading
-    if (!this.tech_) {
-      this.videoTracks_ = this.videoTracks_ || new VideoTrackList();
-      return this.videoTracks_;
-    }
-
-    return this.tech_.videoTracks();
-  }
-
-  /**
-   * Get the {@link AudioTrackList}
-   *
-   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#audiotracklist
-   *
-   * @return {AudioTrackList}
-   *         the current audio track list
-   */
-  audioTracks() {
-    // if we have not yet loadTech_, we create videoTracks_
-    // these will be passed to the tech during loading
-    if (!this.tech_) {
-      this.audioTracks_ = this.audioTracks_ || new AudioTrackList();
-      return this.audioTracks_;
-    }
-
-    return this.tech_.audioTracks();
-  }
-
-  /**
-   * Get the {@link TextTrackList}
-   *
-   * Text tracks are tracks of timed text events.
-   * - Captions: text displayed over the video
-   *             for the hearing impaired
-   * - Subtitles: text displayed over the video for
-   *              those who don't understand language in the video
-   * - Chapters: text displayed in a menu allowing the user to jump
-   *             to particular points (chapters) in the video
-   * - Descriptions: (not yet implemented) audio descriptions that are read back to
-   *                 the user by a screen reading device
-   *
-   * @see http://www.w3.org/html/wg/drafts/html/master/embedded-content-0.html#dom-media-texttracks
-   *
-   * @return {TextTrackList|undefined}
-   *         The current TextTrackList or undefined if
-   *         or undefined if we don't have a tech
-   */
-  textTracks() {
-    // cannot use techGet_ directly because it checks to see whether the tech is ready.
-    // Flash is unlikely to be ready in time but textTracks should still work.
-    if (this.tech_) {
-      return this.tech_.textTracks();
-    }
-  }
-
-  /**
-   * Get the "remote" {@link TextTrackList}. Remote Text Tracks
-   * are tracks that were added to the HTML video element and can
-   * be removed, whereas normal texttracks cannot be removed.
-   *
-   *
-   * @return {TextTrackList|undefined}
-   *         The current remote text track list or undefined
-   *         if we don't have a tech
-   */
-  remoteTextTracks() {
-    if (this.tech_) {
-      return this.tech_.remoteTextTracks();
-    }
-  }
-
-  /**
-   * Get the "remote" {@link HTMLTrackElementList}.
-   * This gives the user all of the DOM elements that match up
-   * with the remote {@link TextTrackList}.
-   *
-   * @return {HTMLTrackElementList}
-   *         The current remote text track list elements
-   *         or undefined if we don't have a tech
-   */
-  remoteTextTrackEls() {
-    if (this.tech_) {
-      return this.tech_.remoteTextTrackEls();
-    }
   }
 
   /**
@@ -2953,9 +3000,9 @@ class Player extends Component {
    *
    * @param {boolean} [manualCleanup=true] if set to false, the TextTrack will be
    *
-   * @return {HTMLTrackElement}
+   * @return {HtmlTrackElement}
    *         the HTMLTrackElement that was created and added
-   *         to the HTMLTrackElementList and the remote
+   *         to the HtmlTrackElementList and the remote
    *         TextTrackList
    *
    * @deprecated The default value of the "manualCleanup" parameter will default
@@ -2969,7 +3016,7 @@ class Player extends Component {
 
   /**
    * Remove a remote {@link TextTrack} from the respective
-   * {@link TextTrackList} and {@link HTMLTrackElementList}.
+   * {@link TextTrackList} and {@link HtmlTrackElementList}.
    *
    * @param {Object} track
    *        Remote {@link TextTrack} to remove
@@ -2984,6 +3031,20 @@ class Player extends Component {
     if (this.tech_) {
       return this.tech_.removeRemoteTextTrack(track);
     }
+  }
+
+  /**
+   * Gets available media playback quality metrics as specified by the W3C's Media
+   * Playback Quality API.
+   *
+   * @see [Spec]{@link https://wicg.github.io/media-playback-quality}
+   *
+   * @return {Object|undefined}
+   *         An object with supported media playback quality metrics or undefined if there
+   *         is no tech or the tech does not support it.
+   */
+  getVideoPlaybackQuality() {
+    return this.techGet_('getVideoPlaybackQuality');
   }
 
   /**
@@ -3006,13 +3067,6 @@ class Player extends Component {
     return this.tech_ && this.tech_.videoHeight && this.tech_.videoHeight() || 0;
   }
 
-  // Methods to add support for
-  // initialTime: function() { return this.techCall_('initialTime'); },
-  // startOffsetTime: function() { return this.techCall_('startOffsetTime'); },
-  // played: function() { return this.techCall_('played'); },
-  // defaultPlaybackRate: function() { return this.techCall_('defaultPlaybackRate'); },
-  // defaultMuted: function() { return this.techCall_('defaultMuted'); }
-
   /**
    * The player's language code
    * NOTE: The language should be set in the player options if you want the
@@ -3022,9 +3076,8 @@ class Player extends Component {
    * @param {string} [code]
    *        the language code to set the player to
    *
-   * @return {string|Player}
-   *         - The current language code when getting
-   *         - A reference to the player when setting
+   * @return {string}
+   *         The current language code when getting
    */
   language(code) {
     if (code === undefined) {
@@ -3032,7 +3085,6 @@ class Player extends Component {
     }
 
     this.language_ = String(code).toLowerCase();
-    return this;
   }
 
   /**
@@ -3099,7 +3151,8 @@ class Player extends Component {
       this.removeChild(modal);
     });
 
-    return modal.open();
+    modal.open();
+    return modal;
   }
 
   /**
@@ -3118,10 +3171,10 @@ class Player extends Component {
       tracks: []
     };
 
-    const tagOptions = Dom.getElAttributes(tag);
+    const tagOptions = Dom.getAttributes(tag);
     const dataSetup = tagOptions['data-setup'];
 
-    if (Dom.hasElClass(tag, 'vjs-fluid')) {
+    if (Dom.hasClass(tag, 'vjs-fluid')) {
       tagOptions.fluid = true;
     }
 
@@ -3149,9 +3202,9 @@ class Player extends Component {
         const childName = child.nodeName.toLowerCase();
 
         if (childName === 'source') {
-          baseOptions.sources.push(Dom.getElAttributes(child));
+          baseOptions.sources.push(Dom.getAttributes(child));
         } else if (childName === 'track') {
-          baseOptions.tracks.push(Dom.getElAttributes(child));
+          baseOptions.tracks.push(Dom.getAttributes(child));
         }
       }
     }
@@ -3181,6 +3234,70 @@ class Player extends Component {
 }
 
 /**
+ * Get the {@link VideoTrackList}
+ * @link https://html.spec.whatwg.org/multipage/embedded-content.html#videotracklist
+ *
+ * @return {VideoTrackList}
+ *         the current video track list
+ *
+ * @method Player.prototype.videoTracks
+ */
+
+/**
+ * Get the {@link AudioTrackList}
+ * @link https://html.spec.whatwg.org/multipage/embedded-content.html#audiotracklist
+ *
+ * @return {AudioTrackList}
+ *         the current audio track list
+ *
+ * @method Player.prototype.audioTracks
+ */
+
+/**
+ * Get the {@link TextTrackList}
+ *
+ * @link http://www.w3.org/html/wg/drafts/html/master/embedded-content-0.html#dom-media-texttracks
+ *
+ * @return {TextTrackList}
+ *         the current text track list
+ *
+ * @method Player.prototype.textTracks
+ */
+
+/**
+ * Get the remote {@link TextTrackList}
+ *
+ * @return {TextTrackList}
+ *         The current remote text track list
+ *
+ * @method Player.prototype.remoteTextTracks
+ */
+
+/**
+ * Get the remote {@link HtmlTrackElementList} tracks.
+ *
+ * @return {HtmlTrackElementList}
+ *         The current remote text track element list
+ *
+ * @method Player.prototype.remoteTextTrackEls
+ */
+
+TRACK_TYPES.names.forEach(function(name) {
+  const props = TRACK_TYPES[name];
+
+  Player.prototype[props.getterName] = function() {
+    if (this.tech_) {
+      return this.tech_[props.getterName]();
+    }
+
+    // if we have not yet loadTech_, we create {video,audio,text}Tracks_
+    // these will be passed to the tech during loading
+    this[props.privateName] = this[props.privateName] || new props.ListClass();
+    return this[props.privateName];
+  };
+});
+
+/**
  * Global player list
  *
  * @type {Object}
@@ -3199,14 +3316,10 @@ const navigator = window.navigator;
  */
 Player.prototype.options_ = {
   // Default order of fallback technology
-  techOrder: ['html5', 'flash'],
-  // techOrder: ['flash','html5'],
+  techOrder: Tech.defaultTechOrder_,
 
   html5: {},
   flash: {},
-
-  // defaultVolume: 0.85,
-  defaultVolume: 0.00,
 
   // default inactivity timeout
   inactivityTimeout: 2000,
@@ -3345,6 +3458,34 @@ TECH_EVENTS_RETRIGGER.forEach(function(event) {
  *
  * @event Player#volumechange
  * @type {EventTarget~Event}
+ */
+
+/**
+ * Reports whether or not a player has a plugin available.
+ *
+ * This does not report whether or not the plugin has ever been initialized
+ * on this player. For that, [usingPlugin]{@link Player#usingPlugin}.
+ *
+ * @method Player#hasPlugin
+ * @param  {string}  name
+ *         The name of a plugin.
+ *
+ * @return {boolean}
+ *         Whether or not this player has the requested plugin available.
+ */
+
+/**
+ * Reports whether or not a player is using a plugin by name.
+ *
+ * For basic plugins, this only reports whether the plugin has _ever_ been
+ * initialized on this player.
+ *
+ * @method Player#usingPlugin
+ * @param  {string} name
+ *         The name of a plugin.
+ *
+ * @return {boolean}
+ *         Whether or not this player is using the requested plugin.
  */
 
 Component.registerComponent('Player', Player);

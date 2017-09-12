@@ -26,7 +26,6 @@ class CaptionsButton extends TextTrackButton {
    */
   constructor(player, options, ready) {
     super(player, options, ready);
-    this.el_.setAttribute('aria-label', 'Captions Menu');
   }
 
   /**
@@ -39,31 +38,8 @@ class CaptionsButton extends TextTrackButton {
     return `vjs-captions-button ${super.buildCSSClass()}`;
   }
 
-  /**
-   * Update caption menu items
-   *
-   * @param {EventTarget~Event} [event]
-   *        The `addtrack` or `removetrack` event that caused this function to be
-   *        called.
-   *
-   * @listens TextTrackList#addtrack
-   * @listens TextTrackList#removetrack
-   */
-  update(event) {
-    let threshold = 2;
-
-    super.update();
-
-    // if native, then threshold is 1 because no settings button
-    if (this.player().tech_ && this.player().tech_.featuresNativeTextTracks) {
-      threshold = 1;
-    }
-
-    if (this.items && this.items.length > threshold) {
-      this.show();
-    } else {
-      this.hide();
-    }
+  buildWrapperCSSClass() {
+    return `vjs-captions-button ${super.buildWrapperCSSClass()}`;
   }
 
   /**
@@ -77,6 +53,8 @@ class CaptionsButton extends TextTrackButton {
 
     if (!(this.player().tech_ && this.player().tech_.featuresNativeTextTracks)) {
       items.push(new CaptionSettingsMenuItem(this.player_, {kind: this.kind_}));
+
+      this.hideThreshold_ += 1;
     }
 
     return super.createItems(items);

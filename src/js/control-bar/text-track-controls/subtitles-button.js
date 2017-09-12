@@ -25,7 +25,6 @@ class SubtitlesButton extends TextTrackButton {
    */
   constructor(player, options, ready) {
     super(player, options, ready);
-    this.el_.setAttribute('aria-label', 'Subtitles Menu');
   }
 
   /**
@@ -38,6 +37,9 @@ class SubtitlesButton extends TextTrackButton {
     return `vjs-subtitles-button ${super.buildCSSClass()}`;
   }
 
+  buildWrapperCSSClass() {
+    return `vjs-subtitles-button ${super.buildWrapperCSSClass()}`;
+  }
 }
 
 /**

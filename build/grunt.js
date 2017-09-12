@@ -145,6 +145,10 @@ module.exports = function(grunt) {
         files: ['src/css/**/*'],
         tasks: ['skin']
       },
+      lang: {
+        files: ['lang/**/*.json'],
+        tasks: ['vjslanguages']
+      }
     },
     connect: {
       dev: {
@@ -263,25 +267,25 @@ module.exports = function(grunt) {
         options: {
           release: 'major'
         },
-        src: ['package.json', 'component.json']
+        src: ['package.json']
       },
       minor: {
         options: {
           release: 'minor'
         },
-        src: ['package.json', 'component.json']
+        src: ['package.json']
       },
       patch: {
         options: {
           release: 'patch'
         },
-        src: ['package.json', 'component.json']
+        src: ['package.json']
       },
       prerelease: {
         options: {
           release: 'prerelease'
         },
-        src: ['package.json', 'component.json']
+        src: ['package.json']
       },
       css: {
         options: {
@@ -404,10 +408,10 @@ module.exports = function(grunt) {
       ],
       dev: [
         'shell:babel',
-        'browserify:watch',
-        'browserify:watchnovtt',
+        'shell:rollupwatch',
         'browserify:tests',
         'watch:skin',
+        'watch:lang',
         'watch:dist'
       ],
       // Run multiple watch tasks in parallel
@@ -443,14 +447,32 @@ module.exports = function(grunt) {
       }
     },
     shell: {
+      rollup: {
+        command: 'npm run rollup',
+        options: {
+          preferLocal: true
+        }
+      },
+      rollupall: {
+        command: 'npm run rollup -- --no-progress && npm run rollup-minify -- --no-progress',
+        options: {
+          preferLocal: true
+        }
+      },
+      rollupwatch: {
+        command: 'npm run rollup-dev',
+        optoins: {
+          preferLocal: true
+        }
+      },
       babel: {
-        command: 'npm run babel -- --watch',
+        command: 'npm run babel -- --watch --quiet',
         options: {
           preferLocal: true
         }
       },
       lint: {
-        command: 'npm run lint',
+        command: 'npm run lint -- --errors',
         options: {
           preferLocal: true
         }
@@ -468,7 +490,7 @@ module.exports = function(grunt) {
         }
       },
       webpack: {
-        command: 'webpack test/require/webpack.js build/temp/webpack.js',
+        command: 'webpack --hide-modules test/require/webpack.js build/temp/webpack.js',
         options: {
           preferLocal: true
         }
@@ -504,12 +526,7 @@ module.exports = function(grunt) {
     'shell:lint',
     'clean:build',
 
-    'babel:es5',
-    'browserify:build',
-    'browserify:buildnovtt',
-    'usebanner:novtt',
-    'usebanner:vtt',
-    'uglify',
+    'shell:rollupall',
 
     'skin',
     'version:css',
@@ -558,7 +575,7 @@ module.exports = function(grunt) {
   });
 
   // Run while developing
-  grunt.registerTask('dev', ['connect:dev', 'concurrent:dev']);
+  grunt.registerTask('dev', ['sandbox', 'connect:dev', 'concurrent:dev']);
   grunt.registerTask('watchAll', ['build', 'connect:dev', 'concurrent:watchAll']);
   grunt.registerTask('test-a11y', ['copy:a11y', 'accessibility']);
 

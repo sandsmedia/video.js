@@ -1,11 +1,18 @@
 /* eslint-env qunit */
 import videojs from '../../src/js/video.js';
-import TestHelpers from './test-helpers.js';
 import * as Dom from '../../src/js/utils/dom.js';
 import log from '../../src/js/utils/log.js';
 import document from 'global/document';
+import sinon from 'sinon';
 
-QUnit.module('video.js');
+QUnit.module('video.js', {
+  beforeEach() {
+    this.clock = sinon.useFakeTimers();
+  },
+  afterEach() {
+    this.clock.restore();
+  }
+});
 
 QUnit.test('should create a video tag and have access children in old IE', function(assert) {
   const fixture = document.getElementById('qunit-fixture');
@@ -165,19 +172,16 @@ QUnit.test('should add the value to the languages object with lower case lang co
                   'should also match');
 });
 
-QUnit.test('should expose plugin registry function', function(assert) {
-  const pluginName = 'foo';
-  const pluginFunction = function(options) {};
-
-  assert.ok(videojs.plugin, 'should exist');
-
-  videojs.plugin(pluginName, pluginFunction);
-
-  const player = TestHelpers.makePlayer();
-
-  assert.ok(player.foo, 'should exist');
-  assert.equal(player.foo, pluginFunction, 'should be equal');
-  player.dispose();
+QUnit.test('should expose plugin functions', function(assert) {
+  [
+    'registerPlugin',
+    'plugin',
+    'getPlugins',
+    'getPlugin',
+    'getPluginVersion'
+  ].forEach(name => {
+    assert.strictEqual(typeof videojs[name], 'function', `videojs.${name} is a function`);
+  });
 });
 
 QUnit.test('should expose options and players properties for backward-compatibility', function(assert) {
@@ -186,33 +190,49 @@ QUnit.test('should expose options and players properties for backward-compatibil
 });
 
 QUnit.test('should expose DOM functions', function(assert) {
+  const origWarnLog = log.warn;
+  const warnLogs = [];
 
-  // Keys are videojs methods, values are Dom methods.
-  const methods = {
-    isEl: 'isEl',
-    isTextNode: 'isTextNode',
-    createEl: 'createEl',
-    hasClass: 'hasElClass',
-    addClass: 'addElClass',
-    removeClass: 'removeElClass',
-    toggleClass: 'toggleElClass',
-    setAttributes: 'setElAttributes',
-    getAttributes: 'getElAttributes',
-    emptyEl: 'emptyEl',
-    insertContent: 'insertContent',
-    appendContent: 'appendContent'
+  log.warn = (args) => {
+    warnLogs.push(args);
   };
 
-  const keys = Object.keys(methods);
+  const methods = [
+    'isEl',
+    'isTextNode',
+    'createEl',
+    'hasClass',
+    'addClass',
+    'removeClass',
+    'toggleClass',
+    'setAttributes',
+    'getAttributes',
+    'emptyEl',
+    'insertContent',
+    'appendContent'
+  ];
 
-  assert.expect(keys.length);
-  keys.forEach(function(vjsName) {
-    const domName = methods[vjsName];
+  methods.forEach(name => {
+    assert.strictEqual(typeof videojs[name], 'function', `function videojs.${name}`);
+    assert.strictEqual(typeof Dom[name], 'function', `Dom.${name} function exists`);
 
-    assert.strictEqual(videojs[vjsName],
-                      Dom[domName],
-                      `videojs.${vjsName} is a reference to Dom.${domName}`);
+    const oldMethod = Dom[name];
+    let domCalls = 0;
+
+    Dom[name] = () => domCalls++;
+
+    videojs[name]();
+
+    assert.equal(domCalls, 1, `Dom.${name} was called when videojs.${name} is run.`);
+    assert.equal(warnLogs.length, 1, `videojs.${name} logs a deprecation warning`);
+
+    // reset
+    warnLogs.length = 0;
+    Dom[name] = oldMethod;
   });
+
+  // reset log
+  log.warn = origWarnLog;
 });
 
 QUnit.test('ingest player div if data-vjs-player attribute is present on video parentNode', function(assert) {
@@ -264,6 +284,8 @@ QUnit.test('ingested player div should not create a new tag for movingMediaEleme
     techOrder: ['html5']
   });
 
+  this.clock.tick(1);
+
   assert.equal(player.el(), playerDiv, 'we re-used the given div');
   assert.equal(player.tech_.el(), vid, 'we re-used the video element');
   assert.ok(player.hasClass('foo'), 'keeps any classes that were around previously');
@@ -298,6 +320,8 @@ QUnit.test('should create a new tag for movingMediaElementInDOM', function(asser
   const player = videojs(vid, {
     techOrder: ['html5']
   });
+
+  this.clock.tick(1);
 
   assert.notEqual(player.el(), playerDiv, 'we used a new div');
   assert.notEqual(player.tech_.el(), vid, 'we a new video element');

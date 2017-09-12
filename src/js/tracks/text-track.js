@@ -198,13 +198,17 @@ class TextTrack extends Track {
     });
 
     if (mode !== 'disabled') {
-      tt.tech_.on('timeupdate', timeupdateHandler);
+      tt.tech_.ready(() => {
+        tt.tech_.on('timeupdate', timeupdateHandler);
+      }, true);
     }
 
     /**
+     * @memberof TextTrack
      * @member {boolean} default
      *         If this track was set to be on or off by default. Cannot be changed after
      *         creation.
+     * @instance
      *
      * @readonly
      */
@@ -216,9 +220,11 @@ class TextTrack extends Track {
     });
 
     /**
+     * @memberof TextTrack
      * @member {string} mode
      *         Set the mode of this TextTrack to a valid {@link TextTrack~Mode}. Will
      *         not be set if setting to an invalid mode.
+     * @instance
      *
      * @fires TextTrack#modechange
      */
@@ -232,7 +238,10 @@ class TextTrack extends Track {
         }
         mode = newMode;
         if (mode === 'showing') {
-          this.tech_.on('timeupdate', timeupdateHandler);
+
+          this.tech_.ready(() => {
+            this.tech_.on('timeupdate', timeupdateHandler);
+          }, true);
         }
         /**
          * An event that fires when mode changes on this track. This allows
@@ -244,12 +253,15 @@ class TextTrack extends Track {
          * @type {EventTarget~Event}
          */
         this.trigger('modechange');
+
       }
     });
 
     /**
+     * @memberof TextTrack
      * @member {TextTrackCueList} cues
      *         The text track cue list for this TextTrack.
+     * @instance
      */
     Object.defineProperty(tt, 'cues', {
       get() {
@@ -263,8 +275,10 @@ class TextTrack extends Track {
     });
 
     /**
+     * @memberof TextTrack
      * @member {TextTrackCueList} activeCues
      *         The list text track cues that are currently active for this TextTrack.
+     * @instance
      */
     Object.defineProperty(tt, 'activeCues', {
       get() {
@@ -328,14 +342,28 @@ class TextTrack extends Track {
    * @param {TextTrack~Cue} cue
    *        The cue to add to our internal list
    */
-  addCue(cue) {
+  addCue(originalCue) {
+    let cue = originalCue;
+
+    if (window.vttjs && !(originalCue instanceof window.vttjs.VTTCue)) {
+      cue = new window.vttjs.VTTCue(originalCue.startTime, originalCue.endTime, originalCue.text);
+
+      for (const prop in originalCue) {
+        if (!(prop in cue)) {
+          cue[prop] = originalCue[prop];
+        }
+      }
+
+      // make sure that `id` is copied over
+      cue.id = originalCue.id;
+      cue.originalCue_ = originalCue;
+    }
+
     const tracks = this.tech_.textTracks();
 
-    if (tracks) {
-      for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i] !== this) {
-          tracks[i].removeCue(cue);
-        }
+    for (let i = 0; i < tracks.length; i++) {
+      if (tracks[i] !== this) {
+        tracks[i].removeCue(cue);
       }
     }
 
@@ -350,19 +378,16 @@ class TextTrack extends Track {
    *        The cue to remove from our internal list
    */
   removeCue(removeCue) {
-    let removed = false;
+    let i = this.cues_.length;
 
-    for (let i = 0, l = this.cues_.length; i < l; i++) {
+    while (i--) {
       const cue = this.cues_[i];
 
-      if (cue === removeCue) {
+      if (cue === removeCue || (cue.originalCue_ && cue.originalCue_ === removeCue)) {
         this.cues_.splice(i, 1);
-        removed = true;
+        this.cues.setCues_(this.cues_);
+        break;
       }
-    }
-
-    if (removed) {
-      this.cues.setCues_(this.cues_);
     }
   }
 }

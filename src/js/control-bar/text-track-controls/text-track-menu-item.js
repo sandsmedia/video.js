@@ -29,20 +29,21 @@ class TextTrackMenuItem extends MenuItem {
 
     // Modify options for parent MenuItem class's init.
     options.label = track.label || track.language || 'Unknown';
-    options.selected = track.default || track.mode === 'showing';
+    options.selected = track.mode === 'showing';
 
     super(player, options);
 
     this.track = track;
+    const changeHandler = Fn.bind(this, this.handleTracksChange);
+    const selectedLanguageChangeHandler = Fn.bind(this, this.handleSelectedLanguageChange);
 
-    if (tracks) {
-      const changeHandler = Fn.bind(this, this.handleTracksChange);
-
-      tracks.addEventListener('change', changeHandler);
-      this.on('dispose', function() {
-        tracks.removeEventListener('change', changeHandler);
-      });
-    }
+    player.on(['loadstart', 'texttrackchange'], changeHandler);
+    tracks.addEventListener('change', changeHandler);
+    tracks.addEventListener('selectedlanguagechange', selectedLanguageChangeHandler);
+    this.on('dispose', function() {
+      tracks.removeEventListener('change', changeHandler);
+      tracks.removeEventListener('selectedlanguagechange', selectedLanguageChangeHandler);
+    });
 
     // iOS7 doesn't dispatch change events to TextTrackLists when an
     // associated track's mode changes. Without something like
@@ -50,7 +51,7 @@ class TextTrackMenuItem extends MenuItem {
     // possible to detect changes to the mode attribute and polyfill
     // the change event. As a poor substitute, we manually dispatch
     // change events whenever the controls modify the mode.
-    if (tracks && tracks.onchange === undefined) {
+    if (tracks.onchange === undefined) {
       let event;
 
       this.on(['tap', 'click'], function() {
@@ -86,7 +87,12 @@ class TextTrackMenuItem extends MenuItem {
    */
   handleClick(event) {
     const kind = this.track.kind;
+    let kinds = this.track.kinds;
     const tracks = this.player_.textTracks();
+
+    if (!kinds) {
+      kinds = [kind];
+    }
 
     super.handleClick(event);
 
@@ -97,13 +103,11 @@ class TextTrackMenuItem extends MenuItem {
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
 
-      if (track.kind !== kind) {
-        continue;
-      }
-
-      if (track === this.track) {
-        track.mode = 'showing';
-      } else {
+      if (track === this.track && (kinds.indexOf(track.kind) > -1)) {
+        if (track.mode !== 'showing') {
+          track.mode = 'showing';
+        }
+      } else if (track.mode !== 'disabled') {
         track.mode = 'disabled';
       }
     }
@@ -119,6 +123,25 @@ class TextTrackMenuItem extends MenuItem {
    */
   handleTracksChange(event) {
     this.selected(this.track.mode === 'showing');
+  }
+
+  handleSelectedLanguageChange(event) {
+    if (this.track.mode === 'showing') {
+      const selectedLanguage = this.player_.cache_.selectedLanguage;
+
+      // Don't replace the kind of track across the same language
+      if (selectedLanguage && selectedLanguage.enabled &&
+        selectedLanguage.language === this.track.language &&
+        selectedLanguage.kind !== this.track.kind) {
+        return;
+      }
+
+      this.player_.cache_.selectedLanguage = {
+        enabled: true,
+        language: this.track.language,
+        kind: this.track.kind
+      };
+    }
   }
 
 }

@@ -12,13 +12,12 @@ import './time-controls/remaining-time-display.js';
 import './live-display.js';
 import './progress-control/progress-control.js';
 import './fullscreen-toggle.js';
-import './volume-control/volume-control.js';
-import './volume-menu-button.js';
-import './mute-toggle.js';
+import './volume-panel.js';
 import './text-track-controls/chapters-button.js';
 import './text-track-controls/descriptions-button.js';
 import './text-track-controls/subtitles-button.js';
 import './text-track-controls/captions-button.js';
+import './text-track-controls/subs-caps-button.js';
 import './audio-track-controls/audio-track-button.js';
 import './playback-rate-menu/playback-rate-menu-button.js';
 import './spacer-controls/custom-control-spacer.js';
@@ -41,7 +40,8 @@ class ControlBar extends Component {
       className: 'vjs-control-bar',
       dir: 'ltr'
     }, {
-      // The control bar is a group, so it can contain menuitems
+      // The control bar is a group, but we don't aria-label it to avoid
+      //  over-announcing by JAWS
       role: 'group'
     });
   }
@@ -56,7 +56,7 @@ class ControlBar extends Component {
 ControlBar.prototype.options_ = {
   children: [
     'playToggle',
-    'volumeMenuButton',
+    'volumePanel',
     'currentTimeDisplay',
     'timeDivider',
     'durationDisplay',
@@ -67,8 +67,7 @@ ControlBar.prototype.options_ = {
     'playbackRateMenuButton',
     'chaptersButton',
     'descriptionsButton',
-    'subtitlesButton',
-    'captionsButton',
+    'subsCapsButton',
     'audioTrackButton',
     'fullscreenToggle'
   ]
